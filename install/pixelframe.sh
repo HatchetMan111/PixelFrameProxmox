@@ -15,6 +15,15 @@ set -euo pipefail
 # Hinweis: absichtlich NICHT $HOSTNAME verwendet – das ist eine eingebaute
 # Bash-Variable mit dem echten Hostnamen des Proxmox-Hosts, ${HOSTNAME:-...}
 # würde also nie den Default greifen lassen.
+#
+# CTID-Auflösung: wurde bei einem früheren Lauf bereits eine VMID vergeben
+# (siehe STATE_FILE weiter unten), wird die für Updates wiederverwendet –
+# nur so bleibt das Skript bei Reruns idempotent, falls der Default (200)
+# durch etwas anderes belegt ist. Explizit gesetztes CTID hat immer Vorrang.
+STATE_FILE="/etc/pixelframe-ctid"
+if [[ -z "${CTID:-}" && -f "$STATE_FILE" ]]; then
+  CTID="$(cat "$STATE_FILE")"
+fi
 CTID="${CTID:-200}"
 CT_HOSTNAME="${CT_HOSTNAME:-pixelframe}"
 DISK_GB="${DISK_GB:-2}"
@@ -113,6 +122,15 @@ fi
 if pct status "$CTID" &>/dev/null; then
   log "Container $CTID existiert bereits – überspringe pct create."
 else
+  # VMID-Namespace ist zwischen LXC-Containern und QEMU-VMs geteilt: pct status
+  # (oben bereits geprüft) erkennt nur Container. Ist die ID durch eine VM
+  # belegt, weicht pct create sonst mit "already exists" (Exit 2) ab.
+  if command -v qm &>/dev/null && qm status "$CTID" &>/dev/null; then
+    log "VMID $CTID ist bereits durch eine VM belegt – wähle nächste freie VMID."
+    CTID="$(pvesh get /cluster/nextid)"
+    log "Verwende freie VMID: $CTID"
+  fi
+
   log "Erstelle LXC-Container $CTID (${CORES} vCPU, ${RAM_MB}MB RAM, ${DISK_GB}GB Disk)..."
   if ! CREATE_OUT=$(pct create "$CTID" "${TEMPLATE_STORAGE}:vztmpl/${DEBIAN_TEMPLATE}" \
     --hostname "$CT_HOSTNAME" \
@@ -128,6 +146,8 @@ else
     exit 1
   fi
   echo "$CREATE_OUT"
+  echo "$CTID" > "$STATE_FILE"
+  log "VMID $CTID in ${STATE_FILE} gemerkt (für künftige Updates ohne explizites CTID)."
 fi
 
 log "Starte Container..."
