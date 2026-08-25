@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <title>PixelFrame</title>
 <style>
   html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden; }
@@ -13,9 +15,20 @@
   }
   #stage img.visible { opacity: 1; }
   #empty {
-    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    position: absolute; inset: 0;
     color: #666; font-family: system-ui, sans-serif; font-size: 1.1rem; text-align: center; padding: 0 20px;
   }
+  /* Wichtig: display:flex nur wenn NICHT hidden, sonst überschreibt diese Regel
+     das hidden-Attribut per CSS-Spezifität und der Hinweis liegt immer über
+     dem Bild, selbst wenn die Diashow längst läuft. */
+  #empty:not([hidden]) { display: flex; align-items: center; justify-content: center; }
+  #fs-btn {
+    position: absolute; right: 16px; bottom: 16px; z-index: 10;
+    background: rgba(255,255,255,.12); color: #fff; border: 1px solid rgba(255,255,255,.3);
+    border-radius: 8px; padding: 10px 16px; font-family: system-ui, sans-serif; font-size: 0.95rem;
+    cursor: pointer; backdrop-filter: blur(4px);
+  }
+  #fs-btn[hidden] { display: none; }
 </style>
 </head>
 <body>
@@ -24,22 +37,24 @@
     <img id="img-b" alt="">
     <div id="empty" hidden>Noch keine Bilder. Bitte unter /upload hochladen.</div>
   </div>
+  <button id="fs-btn">⤢ Vollbild</button>
 
 <script>
 (function () {
   var params = new URLSearchParams(location.search);
-  var intervalMs = Math.max(2, parseFloat(params.get('interval')) || 8) * 1000;
-  var shuffle = params.get('shuffle') === '1';
-  var REFRESH_LIST_MS = 60000;
+  var REFRESH_MS = 60000; // Bilderliste & Einstellungen alle 60s neu laden
 
   var imgA = document.getElementById('img-a');
   var imgB = document.getElementById('img-b');
   var emptyEl = document.getElementById('empty');
+  var fsBtn = document.getElementById('fs-btn');
   var front = imgA, back = imgB;
 
   var images = [];
   var order = [];
   var pos = 0;
+  var settings = { interval: 8, shuffle: false };
+  var slideTimer = null;
 
   function shuffleArray(arr) {
     var a = arr.slice();
@@ -51,7 +66,7 @@
   }
 
   function buildOrder() {
-    order = shuffle ? shuffleArray(images) : images.slice();
+    order = settings.shuffle ? shuffleArray(images) : images.slice();
     pos = 0;
   }
 
@@ -63,7 +78,7 @@
     emptyEl.hidden = true;
     var name = order[pos % order.length];
     pos++;
-    if (pos >= order.length && shuffle) buildOrder();
+    if (pos >= order.length && settings.shuffle) buildOrder();
 
     back.src = '/images/' + encodeURIComponent(name);
     back.onload = function () {
@@ -73,16 +88,56 @@
     };
   }
 
-  function refreshList() {
-    fetch('/api/images').then(function (r) { return r.json(); }).then(function (data) {
-      var next = data.images || [];
-      var changed = next.length !== images.length || next.some(function (n, i) { return n !== images[i]; });
-      images = next;
-      if (changed || !order.length) buildOrder();
-    }).catch(function () { /* Netzwerkfehler ignorieren, alte Liste weiterverwenden */ });
+  function restartSlideTimer() {
+    if (slideTimer) clearInterval(slideTimer);
+    var ms = Math.max(2, settings.interval || 8) * 1000;
+    slideTimer = setInterval(showNext, ms);
   }
 
-  // Bildschirm wach halten, falls vom Browser unterstützt
+  function refreshAll() {
+    Promise.all([
+      fetch('/api/images').then(function (r) { return r.json(); }),
+      fetch('/api/settings').then(function (r) { return r.json(); })
+    ]).then(function (results) {
+      var nextImages = results[0].images || [];
+      var nextSettings = results[1] || settings;
+
+      var imagesChanged = nextImages.length !== images.length ||
+        nextImages.some(function (n, i) { return n !== images[i]; });
+      var intervalChanged = nextSettings.interval !== settings.interval;
+      var shuffleChanged = nextSettings.shuffle !== settings.shuffle;
+
+      images = nextImages;
+      settings = nextSettings;
+
+      if (imagesChanged || shuffleChanged || !order.length) buildOrder();
+      if (intervalChanged || shuffleChanged || !slideTimer) restartSlideTimer();
+    }).catch(function () { /* Netzwerkfehler ignorieren, alten Stand weiterverwenden */ });
+  }
+
+  // Manuelle Überschreibung per URL weiterhin möglich (z. B. ?interval=5),
+  // sonst gelten die im Admin-Panel gespeicherten Einstellungen.
+  if (params.has('interval')) settings.interval = parseFloat(params.get('interval')) || settings.interval;
+  if (params.has('shuffle')) settings.shuffle = params.get('shuffle') === '1';
+
+  // ---------- Vollbild ----------
+  function updateFsButton() {
+    fsBtn.hidden = !!document.fullscreenElement;
+  }
+  fsBtn.addEventListener('click', function () {
+    if (document.documentElement.requestFullscreen) {
+      document.documentElement.requestFullscreen().catch(function () {});
+    }
+  });
+  document.addEventListener('fullscreenchange', updateFsButton);
+  updateFsButton();
+  // Automatischer Versuch (klappt nur ohne Nutzer-Geste in wenigen Browsern/
+  // Kiosk-Apps) – sonst bleibt der Button als manueller Fallback sichtbar.
+  if (document.documentElement.requestFullscreen) {
+    document.documentElement.requestFullscreen().catch(function () {});
+  }
+
+  // ---------- Bildschirm wach halten ----------
   if ('wakeLock' in navigator) {
     var requestWakeLock = function () {
       navigator.wakeLock.request('screen').catch(function () {});
@@ -93,14 +148,8 @@
     });
   }
 
-  refreshList();
-  setInterval(refreshList, REFRESH_LIST_MS);
-  setInterval(showNext, intervalMs);
-
-  // erstes Bild sobald Liste da ist
-  var starter = setInterval(function () {
-    if (images.length) { clearInterval(starter); showNext(); }
-  }, 300);
+  refreshAll();
+  setInterval(refreshAll, REFRESH_MS);
 })();
 </script>
 </body>

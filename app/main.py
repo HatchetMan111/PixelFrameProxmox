@@ -3,10 +3,12 @@
 Kein DB-Server: das Dateisystem ist die Datenbank. Jede hochgeladene Datei
 wird einmalig auf max. 1920px verkleinert, EXIF-korrigiert und als JPEG
 gespeichert – der Bilderrahmen (altes Tablet) muss zur Laufzeit nur noch
-anzeigen, nicht mehr rechnen.
+anzeigen, nicht mehr rechnen. Reihenfolge und Anzeige-Einstellungen liegen
+als kleine JSON-Dateien neben dem Bilder-Ordner.
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import time
@@ -15,15 +17,29 @@ from pathlib import Path
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from PIL import Image, ImageOps
+from pydantic import BaseModel
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("PIXELFRAME_DATA_DIR", BASE_DIR.parent / "data" / "images"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+STATE_DIR = DATA_DIR.parent
+ORDER_FILE = STATE_DIR / "order.json"
+SETTINGS_FILE = STATE_DIR / "settings.json"
 
 MAX_EDGE = 1920
 ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".webp"}
+DEFAULT_SETTINGS = {"interval": 8, "shuffle": False}
 
 app = FastAPI(title="PixelFrame")
+
+
+class OrderPayload(BaseModel):
+    images: list[str]
+
+
+class SettingsPayload(BaseModel):
+    interval: float
+    shuffle: bool
 
 
 def _safe_stem(name: str) -> str:
@@ -46,6 +62,32 @@ def _read_static(name: str) -> str:
     return (BASE_DIR / "static" / name).read_text(encoding="utf-8")
 
 
+def _load_json(path: Path, default):
+    if not path.is_file():
+        return default
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return default
+
+
+def _save_json(path: Path, data) -> None:
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _ordered_filenames() -> list[str]:
+    """Bilddateien in gespeicherter Reihenfolge. Heilt order.json automatisch:
+    neu hochgeladene Dateien werden ans Ende angehängt, gelöschte entfernt."""
+    existing = {p.name for p in DATA_DIR.iterdir() if p.is_file()}
+    stored = _load_json(ORDER_FILE, [])
+    order = [n for n in stored if n in existing]
+    missing = sorted(existing - set(order))
+    order.extend(missing)
+    if order != stored:
+        _save_json(ORDER_FILE, order)
+    return order
+
+
 @app.get("/", response_class=HTMLResponse)
 def root() -> str:
     return _read_static("upload.html")
@@ -63,8 +105,31 @@ def frame_page() -> str:
 
 @app.get("/api/images")
 def list_images() -> dict:
-    files = sorted(p.name for p in DATA_DIR.iterdir() if p.is_file())
-    return {"images": files}
+    return {"images": _ordered_filenames()}
+
+
+@app.post("/api/order")
+def set_order(payload: OrderPayload) -> dict:
+    existing = {p.name for p in DATA_DIR.iterdir() if p.is_file()}
+    order = [n for n in payload.images if n in existing]
+    missing = sorted(existing - set(order))
+    order.extend(missing)
+    _save_json(ORDER_FILE, order)
+    return {"images": order}
+
+
+@app.get("/api/settings")
+def get_settings() -> dict:
+    return {**DEFAULT_SETTINGS, **_load_json(SETTINGS_FILE, {})}
+
+
+@app.put("/api/settings")
+def update_settings(payload: SettingsPayload) -> dict:
+    if payload.interval < 2:
+        raise HTTPException(400, "Anzeigedauer muss mindestens 2 Sekunden betragen")
+    settings = {"interval": payload.interval, "shuffle": payload.shuffle}
+    _save_json(SETTINGS_FILE, settings)
+    return settings
 
 
 @app.get("/images/{filename}")
@@ -97,6 +162,10 @@ async def upload_image(file: UploadFile = File(...)) -> dict:
     finally:
         tmp.unlink(missing_ok=True)
 
+    order = _load_json(ORDER_FILE, [])
+    order.append(dest_name)
+    _save_json(ORDER_FILE, order)
+
     return {"filename": dest_name}
 
 
@@ -104,4 +173,6 @@ async def upload_image(file: UploadFile = File(...)) -> dict:
 def delete_image(filename: str) -> dict:
     path = _image_path(filename)
     path.unlink()
+    order = [n for n in _load_json(ORDER_FILE, []) if n != filename]
+    _save_json(ORDER_FILE, order)
     return {"deleted": filename}

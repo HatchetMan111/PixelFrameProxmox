@@ -12,7 +12,10 @@
     padding: 24px;
   }
   h1 { font-size: 1.4rem; margin: 0 0 4px; }
+  h2 { font-size: 1rem; margin: 0 0 10px; color: #ccc; }
   p.sub { color: #999; margin: 0 0 20px; font-size: 0.9rem; }
+  a.frame-link { color: #4caf50; }
+
   #drop {
     border: 2px dashed #555; border-radius: 12px; padding: 32px; text-align: center;
     cursor: pointer; transition: border-color .15s, background .15s;
@@ -20,25 +23,49 @@
   #drop.over { border-color: #4caf50; background: #1a2a1a; }
   #drop p { margin: 0; color: #aaa; }
   input[type=file] { display: none; }
+
+  #settings {
+    margin-top: 28px; padding: 16px; background: #1a1a1a; border-radius: 10px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 16px;
+  }
+  #settings label { display: flex; align-items: center; gap: 6px; font-size: 0.9rem; color: #ccc; }
+  #settings input[type=number] { width: 70px; padding: 6px; border-radius: 6px; border: 1px solid #444; background: #111; color: #eee; }
+  #settings button {
+    background: #4caf50; color: #111; border: none; border-radius: 6px; padding: 8px 14px;
+    cursor: pointer; font-weight: 600;
+  }
+  #settings button:hover { background: #66bb6a; }
+  #settings-status { font-size: 0.85rem; color: #4caf50; }
+
+  #status { margin-top: 12px; font-size: 0.85rem; color: #4caf50; min-height: 1.2em; }
+
   #grid {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-    gap: 12px; margin-top: 24px;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 12px; margin-top: 16px;
   }
   .card { position: relative; border-radius: 8px; overflow: hidden; background: #222; aspect-ratio: 1; }
   .card img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .card button {
+  .card .del-btn {
     position: absolute; top: 4px; right: 4px; background: rgba(0,0,0,.6); color: #fff;
     border: none; border-radius: 6px; width: 28px; height: 28px; cursor: pointer; font-size: 16px;
   }
-  .card button:hover { background: #c62828; }
-  #status { margin-top: 12px; font-size: 0.85rem; color: #4caf50; min-height: 1.2em; }
-  a.frame-link { color: #4caf50; }
+  .card .del-btn:hover { background: #c62828; }
+  .card .order-controls {
+    position: absolute; left: 4px; bottom: 4px; display: flex; gap: 4px;
+  }
+  .card .order-controls button {
+    background: rgba(0,0,0,.6); color: #fff; border: none; border-radius: 6px;
+    width: 28px; height: 28px; cursor: pointer; font-size: 14px;
+  }
+  .card .order-controls button:disabled { opacity: .3; cursor: default; }
+  .card .order-controls button:not(:disabled):hover { background: rgba(76,175,80,.8); }
+
   .empty { color: #777; margin-top: 24px; }
 </style>
 </head>
 <body>
   <h1>PixelFrame</h1>
-  <p class="sub">Bilder hochladen → Diashow ansehen unter <a class="frame-link" href="/frame?interval=8&shuffle=1">/frame</a></p>
+  <p class="sub">Bilder hochladen → Diashow ansehen unter <a class="frame-link" href="/frame">/frame</a></p>
 
   <div id="drop">
     <p>Bilder hierher ziehen oder klicken zum Auswählen</p>
@@ -46,6 +73,15 @@
   </div>
   <div id="status"></div>
 
+  <div id="settings">
+    <h2 style="width:100%; margin-bottom:0;">Diashow-Einstellungen</h2>
+    <label>Anzeigedauer: <input id="interval-input" type="number" min="2" step="1" value="8"> Sek.</label>
+    <label><input id="shuffle-input" type="checkbox"> Zufällige Reihenfolge</label>
+    <button id="save-settings">Speichern</button>
+    <span id="settings-status"></span>
+  </div>
+
+  <h2 style="margin-top:28px;">Bilder &amp; Reihenfolge (↑/↓ zum Verschieben)</h2>
   <div id="grid"></div>
   <p id="empty-msg" class="empty" hidden>Noch keine Bilder hochgeladen.</p>
 
@@ -56,10 +92,53 @@
   var grid = document.getElementById('grid');
   var statusEl = document.getElementById('status');
   var emptyMsg = document.getElementById('empty-msg');
+  var intervalInput = document.getElementById('interval-input');
+  var shuffleInput = document.getElementById('shuffle-input');
+  var saveSettingsBtn = document.getElementById('save-settings');
+  var settingsStatus = document.getElementById('settings-status');
 
   function setStatus(msg, isError) {
     statusEl.textContent = msg || '';
     statusEl.style.color = isError ? '#e57373' : '#4caf50';
+  }
+
+  // ---------- Einstellungen ----------
+  function loadSettings() {
+    fetch('/api/settings').then(function (r) { return r.json(); }).then(function (s) {
+      intervalInput.value = s.interval;
+      shuffleInput.checked = !!s.shuffle;
+    });
+  }
+
+  saveSettingsBtn.addEventListener('click', function () {
+    var body = {
+      interval: parseFloat(intervalInput.value) || 8,
+      shuffle: shuffleInput.checked
+    };
+    fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function (r) {
+      settingsStatus.textContent = r.ok ? 'Gespeichert ✓' : 'Fehler beim Speichern';
+      settingsStatus.style.color = r.ok ? '#4caf50' : '#e57373';
+      setTimeout(function () { settingsStatus.textContent = ''; }, 2500);
+    });
+  });
+
+  // ---------- Bilder & Reihenfolge ----------
+  function saveOrder(list) {
+    return fetch('/api/order', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ images: list })
+    });
+  }
+
+  function moveImage(list, from, to) {
+    var arr = list.slice();
+    var tmp = arr[from]; arr[from] = arr[to]; arr[to] = tmp;
+    saveOrder(arr).then(loadImages);
   }
 
   function loadImages() {
@@ -67,7 +146,7 @@
       grid.innerHTML = '';
       var images = data.images || [];
       emptyMsg.hidden = images.length > 0;
-      images.forEach(function (name) {
+      images.forEach(function (name, idx) {
         var card = document.createElement('div');
         card.className = 'card';
 
@@ -77,11 +156,30 @@
         card.appendChild(img);
 
         var del = document.createElement('button');
+        del.className = 'del-btn';
         del.textContent = '✕';
         del.title = 'Löschen';
         del.addEventListener('click', function () { deleteImage(name); });
         card.appendChild(del);
 
+        var controls = document.createElement('div');
+        controls.className = 'order-controls';
+
+        var up = document.createElement('button');
+        up.textContent = '↑';
+        up.title = 'Nach vorne';
+        up.disabled = idx === 0;
+        up.addEventListener('click', function () { moveImage(images, idx, idx - 1); });
+        controls.appendChild(up);
+
+        var down = document.createElement('button');
+        down.textContent = '↓';
+        down.title = 'Nach hinten';
+        down.disabled = idx === images.length - 1;
+        down.addEventListener('click', function () { moveImage(images, idx, idx + 1); });
+        controls.appendChild(down);
+
+        card.appendChild(controls);
         grid.appendChild(card);
       });
     });
@@ -126,6 +224,7 @@
     if (e.dataTransfer && e.dataTransfer.files) uploadFiles(e.dataTransfer.files);
   });
 
+  loadSettings();
   loadImages();
 })();
 </script>

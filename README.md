@@ -39,16 +39,29 @@ Diashow: http://<Container-IP>:8090/frame?interval=8&shuffle=1
 
 ## Tablet als Bilderrahmen einrichten
 
-1. Kiosk-Browser-App installieren, z. B. **Fully Kiosk Browser** (Android)
-   oder `chrome --kiosk http://<Container-IP>:8090/frame?interval=8&shuffle=1`
+1. **Für eine wirklich unsichtbare Adressleiste:** `/frame` auf dem Tablet
+   öffnen → Browser-Menü → **"Zum Startbildschirm hinzufügen"**. Von dort
+   gestartet läuft die Seite ohne jede Browser-Oberfläche (Standalone-Modus).
+   Alternativ: Kiosk-Browser-App wie **Fully Kiosk Browser** (Android) oder
+   `chrome --kiosk http://<Container-IP>:8090/frame`
 2. Als Startseite/Autostart hinterlegen, Bildschirm-Standby deaktivieren
-3. Die Seite hält den Bildschirm selbst wach (Screen Wake Lock), sofern der
-   Browser das unterstützt
+3. Die Seite versucht zusätzlich automatisch den Vollbildmodus (Fullscreen
+   API) und hält den Bildschirm wach (Screen Wake Lock), sofern der Browser
+   das unterstützt. Ein kleiner "⤢ Vollbild"-Button bleibt als manueller
+   Fallback sichtbar, falls der Browser eine Nutzer-Geste verlangt.
 
-Diashow-Parameter in der URL:
+Anzeigedauer und Reihenfolge werden im Admin-Panel unter `/upload`
+eingestellt (siehe unten) – `/frame` braucht dafür keine URL-Parameter mehr.
+Optional lässt sich das weiterhin einmalig überschreiben: `/frame?interval=5&shuffle=1`
 
-- `interval` – Sekunden pro Bild (Standard: 8)
-- `shuffle` – `1` für zufällige Reihenfolge, sonst chronologisch
+## Admin-Panel (`/upload`)
+
+- **Anzeigedauer:** Sekunden pro Bild eintragen, "Speichern" klicken –
+  wirkt auf allen offenen `/frame`-Ansichten spätestens nach der nächsten
+  Aktualisierung (max. 60s).
+- **Zufällige Reihenfolge:** Checkbox für Shuffle statt fester Reihenfolge.
+- **Reihenfolge ändern:** ↑/↓-Buttons an jedem Bild verschieben es in der
+  Diashow-Reihenfolge nach vorne/hinten.
 
 ## Update
 
@@ -68,9 +81,13 @@ Entfernt den kompletten Container inkl. aller hochgeladenen Bilder.
 
 Keine Datenbank – das Dateisystem ist die Datenbank. Jedes hochgeladene Bild
 wird beim Upload einmalig auf max. 1920px verkleinert, EXIF-korrigiert und
-als JPEG gespeichert (`app/main.py`). Zwei Seiten: `/upload` (Verwaltung)
-und `/frame` (Diashow, pollt alle 60s neue Bilder). Kein Login – Absicherung
-über LAN-only (ufw im Container).
+als JPEG gespeichert (`app/main.py`). Reihenfolge (`data/order.json`) und
+Anzeige-Einstellungen (`data/settings.json`) liegen als kleine JSON-Dateien
+neben dem Bilder-Ordner; `order.json` heilt sich automatisch (neue Bilder
+werden angehängt, gelöschte entfernt). Zwei Seiten: `/upload` (Verwaltung,
+Einstellungen, Reihenfolge) und `/frame` (Diashow, pollt alle 60s neue
+Bilder/Einstellungen). Kein Login – Absicherung über LAN-only (ufw im
+Container).
 
 ## Entwicklung / Tests
 
