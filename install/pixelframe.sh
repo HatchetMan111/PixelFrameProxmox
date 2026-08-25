@@ -7,7 +7,8 @@
 #   bash -c "$(wget -qLO - https://raw.githubusercontent.com/HatchetMan111/PixelFrameProxmox/main/install/pixelframe.sh)"
 #
 # Optionale Variablen (per ENV vor dem Aufruf setzen):
-#   CTID, CT_HOSTNAME, DISK_GB, RAM_MB, CORES, BRIDGE, STORAGE, TEMPLATE_STORAGE, PORT, DEBUG
+#   CTID, CT_HOSTNAME, DISK_GB, RAM_MB, CORES, BRIDGE, STORAGE, TEMPLATE_STORAGE,
+#   DEBIAN_TEMPLATE, PORT, DEBUG
 set -euo pipefail
 
 # ---------- Variablen ----------
@@ -22,29 +23,32 @@ CORES="${CORES:-1}"
 BRIDGE="${BRIDGE:-vmbr0}"
 STORAGE="${STORAGE:-local-lvm}"
 TEMPLATE_STORAGE="${TEMPLATE_STORAGE:-local}"
+DEBIAN_TEMPLATE="${DEBIAN_TEMPLATE:-debian-12-standard_12.7-1_amd64.tar.zst}"
 PORT="${PORT:-8090}"
-DEBIAN_TEMPLATE="debian-12-standard_12.7-1_amd64.tar.zst"
 REPO_URL="https://github.com/HatchetMan111/PixelFrameProxmox.git"
 DEBUG="${DEBUG:-0}"
 
 [[ "$DEBUG" == "1" ]] && set -x
 
 # ---------- Fehler-Trap: immer die vollständige Kette ausgeben ----------
+# WICHTIG: $LINENO muss beim Trap-Aufruf (nicht innerhalb der Funktion)
+# ausgewertet werden, sonst zeigt er immer nur die Zeile dieser Funktion.
 on_error() {
   local rc=$?
+  local line="$1"
   echo >&2
-  echo "❌ FEHLER (Exit-Code $rc) in Zeile $LINENO" >&2
+  echo "❌ FEHLER (Exit-Code $rc) in Zeile $line" >&2
   echo "   Letzter Befehl: $BASH_COMMAND" >&2
   echo "   → Für ein vollständiges bash -x Log erneut mit DEBUG=1 ausführen:" >&2
   echo "     DEBUG=1 bash -c \"\$(wget -qLO - https://raw.githubusercontent.com/HatchetMan111/PixelFrameProxmox/main/install/pixelframe.sh)\"" >&2
-  if pct status "$CTID" &>/dev/null; then
+  if command -v pct &>/dev/null && pct status "$CTID" &>/dev/null; then
     echo >&2
     echo "   Journal des Containers (letzte 50 Zeilen, falls Service existiert):" >&2
     pct exec "$CTID" -- journalctl -u pixelframe --no-pager -n 50 2>&1 | tail -n 50 >&2 || true
   fi
   exit "$rc"
 }
-trap on_error ERR
+trap 'on_error $LINENO' ERR
 
 log() { echo -e "\033[1;33m[PixelFrame]\033[0m $*"; }
 
@@ -58,12 +62,51 @@ if ! command -v pct &>/dev/null; then
   exit 1
 fi
 
+# ---------- Preflight: Storage & Bridge wirklich vorhanden? ----------
+# Häufigste Ursache für "pct create" Exit-Code 2: STORAGE/TEMPLATE_STORAGE
+# existiert auf diesem Host nicht (z. B. lokale Installation ohne local-lvm)
+# oder unterstützt den benötigten Inhaltstyp nicht.
+log "Prüfe Storage und Netzwerk-Bridge..."
+
+if ! pvesm status -content rootdir 2>/dev/null | awk 'NR>1{print $1}' | grep -qx "$STORAGE"; then
+  echo "❌ Storage '$STORAGE' existiert nicht oder unterstützt keine Container-Disks (rootdir)." >&2
+  echo "   Verfügbare Storages für Container-Disks:" >&2
+  pvesm status -content rootdir 2>&1 | sed 's/^/   /' >&2
+  echo "   → Erneut ausführen mit z. B.: STORAGE=<name> bash -c \"...\"" >&2
+  exit 1
+fi
+
+if ! pvesm status -content vztmpl 2>/dev/null | awk 'NR>1{print $1}' | grep -qx "$TEMPLATE_STORAGE"; then
+  echo "❌ Storage '$TEMPLATE_STORAGE' existiert nicht oder unterstützt keine LXC-Templates (vztmpl)." >&2
+  echo "   Verfügbare Storages für Templates:" >&2
+  pvesm status -content vztmpl 2>&1 | sed 's/^/   /' >&2
+  echo "   → Erneut ausführen mit z. B.: TEMPLATE_STORAGE=<name> bash -c \"...\"" >&2
+  exit 1
+fi
+
+if ! ip -brief link show "$BRIDGE" &>/dev/null; then
+  echo "❌ Netzwerk-Bridge '$BRIDGE' existiert nicht." >&2
+  echo "   Verfügbare Interfaces:" >&2
+  ip -brief link show 2>&1 | sed 's/^/   /' >&2
+  echo "   → Erneut ausführen mit z. B.: BRIDGE=<name> bash -c \"...\"" >&2
+  exit 1
+fi
+log "✅ Storage ('$STORAGE'/'$TEMPLATE_STORAGE') und Bridge ('$BRIDGE') sind gültig."
+
 # ---------- Template sicherstellen ----------
 log "Prüfe Debian-12-LXC-Template..."
 if ! pveam list "$TEMPLATE_STORAGE" 2>/dev/null | grep -q "$DEBIAN_TEMPLATE"; then
   log "Lade Template herunter (${DEBIAN_TEMPLATE})..."
   pveam update >/dev/null
-  pveam download "$TEMPLATE_STORAGE" "$DEBIAN_TEMPLATE"
+  if ! DL_OUT=$(pveam download "$TEMPLATE_STORAGE" "$DEBIAN_TEMPLATE" 2>&1); then
+    echo "❌ Template-Download fehlgeschlagen. Vollständige Fehlermeldung:" >&2
+    echo "$DL_OUT" >&2
+    echo "   Verfügbare Debian-12-Templates auf diesem Host:" >&2
+    pveam available 2>&1 | grep -i "debian-12" | sed 's/^/   /' >&2 || true
+    echo "   → Passenden Dateinamen mit DEBIAN_TEMPLATE=<name> erneut versuchen." >&2
+    exit 1
+  fi
+  echo "$DL_OUT"
 fi
 
 # ---------- Container erstellen (idempotent) ----------
@@ -71,7 +114,7 @@ if pct status "$CTID" &>/dev/null; then
   log "Container $CTID existiert bereits – überspringe pct create."
 else
   log "Erstelle LXC-Container $CTID (${CORES} vCPU, ${RAM_MB}MB RAM, ${DISK_GB}GB Disk)..."
-  pct create "$CTID" "${TEMPLATE_STORAGE}:vztmpl/${DEBIAN_TEMPLATE}" \
+  if ! CREATE_OUT=$(pct create "$CTID" "${TEMPLATE_STORAGE}:vztmpl/${DEBIAN_TEMPLATE}" \
     --hostname "$CT_HOSTNAME" \
     --cores "$CORES" \
     --memory "$RAM_MB" \
@@ -79,8 +122,12 @@ else
     --rootfs "${STORAGE}:${DISK_GB}" \
     --net0 "name=eth0,bridge=${BRIDGE},ip=dhcp" \
     --onboot 1 \
-    --unprivileged 1 \
-    --features nesting=1
+    --unprivileged 1 2>&1); then
+    echo "❌ pct create fehlgeschlagen. Vollständige Fehlermeldung:" >&2
+    echo "$CREATE_OUT" >&2
+    exit 1
+  fi
+  echo "$CREATE_OUT"
 fi
 
 log "Starte Container..."
