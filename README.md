@@ -7,14 +7,14 @@ vollständig lokal, keine Cloud, keine Registrierung.
 ## Installation (Proxmox-Host, als root)
 
 ```bash
-bash -c "$(wget -qLO - https://raw.githubusercontent.com/HatchetMan111/PixelFrame/main/install/pixelframe.sh)"
+bash -c "$(wget -qLO - https://raw.githubusercontent.com/HatchetMan111/PixelFrameProxmox/main/install/pixelframe.sh)"
 ```
 
 Optional per Umgebungsvariable anpassbar (Defaults in Klammern):
 
 ```bash
 CTID=201 CT_HOSTNAME=bilderrahmen PORT=8095 \
-  bash -c "$(wget -qLO - https://raw.githubusercontent.com/HatchetMan111/PixelFrame/main/install/pixelframe.sh)"
+  bash -c "$(wget -qLO - https://raw.githubusercontent.com/HatchetMan111/PixelFrameProxmox/main/install/pixelframe.sh)"
 ```
 
 | Variable | Default | Bedeutung |

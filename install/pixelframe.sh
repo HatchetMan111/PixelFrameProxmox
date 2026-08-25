@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
 # PixelFrame – Proxmox LXC Installer (Community-Scripts-Stil)
-# https://github.com/HatchetMan111/PixelFrame
+# https://github.com/HatchetMan111/PixelFrameProxmox
 #
 # Ausführung auf dem Proxmox-Host:
-#   bash -c "$(wget -qLO - https://raw.githubusercontent.com/HatchetMan111/PixelFrame/main/install/pixelframe.sh)"
+#   bash -c "$(wget -qLO - https://raw.githubusercontent.com/HatchetMan111/PixelFrameProxmox/main/install/pixelframe.sh)"
 #
 # Optionale Variablen (per ENV vor dem Aufruf setzen):
 #   CTID, CT_HOSTNAME, DISK_GB, RAM_MB, CORES, BRIDGE, STORAGE, TEMPLATE_STORAGE, PORT, DEBUG
@@ -24,7 +24,7 @@ STORAGE="${STORAGE:-local-lvm}"
 TEMPLATE_STORAGE="${TEMPLATE_STORAGE:-local}"
 PORT="${PORT:-8090}"
 DEBIAN_TEMPLATE="debian-12-standard_12.7-1_amd64.tar.zst"
-REPO_URL="https://github.com/HatchetMan111/PixelFrame.git"
+REPO_URL="https://github.com/HatchetMan111/PixelFrameProxmox.git"
 DEBUG="${DEBUG:-0}"
 
 [[ "$DEBUG" == "1" ]] && set -x
@@ -36,7 +36,7 @@ on_error() {
   echo "❌ FEHLER (Exit-Code $rc) in Zeile $LINENO" >&2
   echo "   Letzter Befehl: $BASH_COMMAND" >&2
   echo "   → Für ein vollständiges bash -x Log erneut mit DEBUG=1 ausführen:" >&2
-  echo "     DEBUG=1 bash -c \"\$(wget -qLO - https://raw.githubusercontent.com/HatchetMan111/PixelFrame/main/install/pixelframe.sh)\"" >&2
+  echo "     DEBUG=1 bash -c \"\$(wget -qLO - https://raw.githubusercontent.com/HatchetMan111/PixelFrameProxmox/main/install/pixelframe.sh)\"" >&2
   if pct status "$CTID" &>/dev/null; then
     echo >&2
     echo "   Journal des Containers (letzte 50 Zeilen, falls Service existiert):" >&2
