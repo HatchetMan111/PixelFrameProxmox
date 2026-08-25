@@ -94,6 +94,9 @@ Container).
 ```bash
 python3 -m venv venv && ./venv/bin/pip install -r requirements-dev.txt
 ./venv/bin/pytest tests/ -v
+
+# Frontend-Regressionstest (Node, keine Abhängigkeiten nötig):
+node tests/js/frame_first_image.test.js
 ```
 
 ## Lizenz

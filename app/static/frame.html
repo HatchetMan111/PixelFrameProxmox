@@ -95,6 +95,7 @@
   }
 
   function refreshAll() {
+    var wasEmpty = !order.length;
     Promise.all([
       fetch('/api/images').then(function (r) { return r.json(); }),
       fetch('/api/settings').then(function (r) { return r.json(); })
@@ -112,6 +113,10 @@
 
       if (imagesChanged || shuffleChanged || !order.length) buildOrder();
       if (intervalChanged || shuffleChanged || !slideTimer) restartSlideTimer();
+
+      // Erstes Bild sofort zeigen statt auf den ersten Timer-Tick zu warten –
+      // sonst bleibt der Bildschirm bei z. B. 100s Anzeigedauer 100s lang schwarz.
+      if (wasEmpty && order.length) showNext();
     }).catch(function () { /* Netzwerkfehler ignorieren, alten Stand weiterverwenden */ });
   }
 
