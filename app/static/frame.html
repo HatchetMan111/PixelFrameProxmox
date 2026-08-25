@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PixelFrame</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden; }
+  #stage { position: relative; width: 100vw; height: 100vh; }
+  #stage img {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    object-fit: contain; opacity: 0; transition: opacity 1.2s ease-in-out;
+  }
+  #stage img.visible { opacity: 1; }
+  #empty {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: #666; font-family: system-ui, sans-serif; font-size: 1.1rem; text-align: center; padding: 0 20px;
+  }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <img id="img-a" alt="">
+    <img id="img-b" alt="">
+    <div id="empty" hidden>Noch keine Bilder. Bitte unter /upload hochladen.</div>
+  </div>
+
+<script>
+(function () {
+  var params = new URLSearchParams(location.search);
+  var intervalMs = Math.max(2, parseFloat(params.get('interval')) || 8) * 1000;
+  var shuffle = params.get('shuffle') === '1';
+  var REFRESH_LIST_MS = 60000;
+
+  var imgA = document.getElementById('img-a');
+  var imgB = document.getElementById('img-b');
+  var emptyEl = document.getElementById('empty');
+  var front = imgA, back = imgB;
+
+  var images = [];
+  var order = [];
+  var pos = 0;
+
+  function shuffleArray(arr) {
+    var a = arr.slice();
+    for (var i = a.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var tmp = a[i]; a[i] = a[j]; a[j] = tmp;
+    }
+    return a;
+  }
+
+  function buildOrder() {
+    order = shuffle ? shuffleArray(images) : images.slice();
+    pos = 0;
+  }
+
+  function showNext() {
+    if (!order.length) {
+      emptyEl.hidden = false;
+      return;
+    }
+    emptyEl.hidden = true;
+    var name = order[pos % order.length];
+    pos++;
+    if (pos >= order.length && shuffle) buildOrder();
+
+    back.src = '/images/' + encodeURIComponent(name);
+    back.onload = function () {
+      front.classList.remove('visible');
+      back.classList.add('visible');
+      var t = front; front = back; back = t;
+    };
+  }
+
+  function refreshList() {
+    fetch('/api/images').then(function (r) { return r.json(); }).then(function (data) {
+      var next = data.images || [];
+      var changed = next.length !== images.length || next.some(function (n, i) { return n !== images[i]; });
+      images = next;
+      if (changed || !order.length) buildOrder();
+    }).catch(function () { /* Netzwerkfehler ignorieren, alte Liste weiterverwenden */ });
+  }
+
+  // Bildschirm wach halten, falls vom Browser unterstützt
+  if ('wakeLock' in navigator) {
+    var requestWakeLock = function () {
+      navigator.wakeLock.request('screen').catch(function () {});
+    };
+    requestWakeLock();
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible') requestWakeLock();
+    });
+  }
+
+  refreshList();
+  setInterval(refreshList, REFRESH_LIST_MS);
+  setInterval(showNext, intervalMs);
+
+  // erstes Bild sobald Liste da ist
+  var starter = setInterval(function () {
+    if (images.length) { clearInterval(starter); showNext(); }
+  }, 300);
+})();
+</script>
+</body>
+</html>

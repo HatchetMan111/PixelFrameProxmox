@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PixelFrame – Bilder verwalten</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: system-ui, sans-serif; background: #111; color: #eee;
+    padding: 24px;
+  }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; }
+  p.sub { color: #999; margin: 0 0 20px; font-size: 0.9rem; }
+  #drop {
+    border: 2px dashed #555; border-radius: 12px; padding: 32px; text-align: center;
+    cursor: pointer; transition: border-color .15s, background .15s;
+  }
+  #drop.over { border-color: #4caf50; background: #1a2a1a; }
+  #drop p { margin: 0; color: #aaa; }
+  input[type=file] { display: none; }
+  #grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 12px; margin-top: 24px;
+  }
+  .card { position: relative; border-radius: 8px; overflow: hidden; background: #222; aspect-ratio: 1; }
+  .card img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .card button {
+    position: absolute; top: 4px; right: 4px; background: rgba(0,0,0,.6); color: #fff;
+    border: none; border-radius: 6px; width: 28px; height: 28px; cursor: pointer; font-size: 16px;
+  }
+  .card button:hover { background: #c62828; }
+  #status { margin-top: 12px; font-size: 0.85rem; color: #4caf50; min-height: 1.2em; }
+  a.frame-link { color: #4caf50; }
+  .empty { color: #777; margin-top: 24px; }
+</style>
+</head>
+<body>
+  <h1>PixelFrame</h1>
+  <p class="sub">Bilder hochladen → Diashow ansehen unter <a class="frame-link" href="/frame?interval=8&shuffle=1">/frame</a></p>
+
+  <div id="drop">
+    <p>Bilder hierher ziehen oder klicken zum Auswählen</p>
+    <input id="file-input" type="file" accept=".jpg,.jpeg,.png,.webp" multiple>
+  </div>
+  <div id="status"></div>
+
+  <div id="grid"></div>
+  <p id="empty-msg" class="empty" hidden>Noch keine Bilder hochgeladen.</p>
+
+<script>
+(function () {
+  var drop = document.getElementById('drop');
+  var input = document.getElementById('file-input');
+  var grid = document.getElementById('grid');
+  var statusEl = document.getElementById('status');
+  var emptyMsg = document.getElementById('empty-msg');
+
+  function setStatus(msg, isError) {
+    statusEl.textContent = msg || '';
+    statusEl.style.color = isError ? '#e57373' : '#4caf50';
+  }
+
+  function loadImages() {
+    fetch('/api/images').then(function (r) { return r.json(); }).then(function (data) {
+      grid.innerHTML = '';
+      var images = data.images || [];
+      emptyMsg.hidden = images.length > 0;
+      images.forEach(function (name) {
+        var card = document.createElement('div');
+        card.className = 'card';
+
+        var img = document.createElement('img');
+        img.src = '/images/' + encodeURIComponent(name);
+        img.loading = 'lazy';
+        card.appendChild(img);
+
+        var del = document.createElement('button');
+        del.textContent = '✕';
+        del.title = 'Löschen';
+        del.addEventListener('click', function () { deleteImage(name); });
+        card.appendChild(del);
+
+        grid.appendChild(card);
+      });
+    });
+  }
+
+  function deleteImage(name) {
+    fetch('/api/images/' + encodeURIComponent(name), { method: 'DELETE' })
+      .then(function () { loadImages(); });
+  }
+
+  function uploadFiles(files) {
+    var list = Array.prototype.slice.call(files);
+    if (!list.length) return;
+    setStatus('Lade ' + list.length + ' Bild(er) hoch …');
+    var done = 0, failed = 0;
+    list.forEach(function (file) {
+      var fd = new FormData();
+      fd.append('file', file);
+      fetch('/api/images', { method: 'POST', body: fd })
+        .then(function (r) { if (!r.ok) failed++; })
+        .catch(function () { failed++; })
+        .finally(function () {
+          done++;
+          if (done === list.length) {
+            setStatus(failed ? (failed + ' von ' + list.length + ' fehlgeschlagen') : 'Fertig!', !!failed);
+            loadImages();
+          }
+        });
+    });
+  }
+
+  drop.addEventListener('click', function () { input.click(); });
+  input.addEventListener('change', function () { uploadFiles(input.files); input.value = ''; });
+
+  ['dragenter', 'dragover'].forEach(function (evt) {
+    drop.addEventListener(evt, function (e) { e.preventDefault(); drop.classList.add('over'); });
+  });
+  ['dragleave', 'drop'].forEach(function (evt) {
+    drop.addEventListener(evt, function (e) { e.preventDefault(); drop.classList.remove('over'); });
+  });
+  drop.addEventListener('drop', function (e) {
+    if (e.dataTransfer && e.dataTransfer.files) uploadFiles(e.dataTransfer.files);
+  });
+
+  loadImages();
+})();
+</script>
+</body>
+</html>
