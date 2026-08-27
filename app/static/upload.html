@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PixelFrame – Bilder verwalten</title>
+<title>PixelFrame – Verwalten</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -14,6 +14,7 @@
   h1 { font-size: 1.4rem; margin: 0 0 4px; }
   h2 { font-size: 1rem; margin: 0 0 10px; color: #ccc; }
   p.sub { color: #999; margin: 0 0 20px; font-size: 0.9rem; }
+  p.hint { color: #777; font-size: 0.8rem; margin: 6px 0 0; }
   a.frame-link { color: #4caf50; }
 
   #drop {
@@ -24,18 +25,19 @@
   #drop p { margin: 0; color: #aaa; }
   input[type=file] { display: none; }
 
-  #settings {
+  .panel {
     margin-top: 28px; padding: 16px; background: #1a1a1a; border-radius: 10px;
     display: flex; flex-wrap: wrap; align-items: center; gap: 16px;
   }
-  #settings label { display: flex; align-items: center; gap: 6px; font-size: 0.9rem; color: #ccc; }
-  #settings input[type=number] { width: 70px; padding: 6px; border-radius: 6px; border: 1px solid #444; background: #111; color: #eee; }
-  #settings button {
+  .panel label { display: flex; align-items: center; gap: 6px; font-size: 0.9rem; color: #ccc; }
+  .panel input[type=number] { width: 70px; padding: 6px; border-radius: 6px; border: 1px solid #444; background: #111; color: #eee; }
+  .panel input[type=password] { padding: 6px; border-radius: 6px; border: 1px solid #444; background: #111; color: #eee; }
+  .panel button {
     background: #4caf50; color: #111; border: none; border-radius: 6px; padding: 8px 14px;
     cursor: pointer; font-weight: 600;
   }
-  #settings button:hover { background: #66bb6a; }
-  #settings-status { font-size: 0.85rem; color: #4caf50; }
+  .panel button:hover { background: #66bb6a; }
+  .panel .status { font-size: 0.85rem; }
 
   #status { margin-top: 12px; font-size: 0.85rem; color: #4caf50; min-height: 1.2em; }
 
@@ -44,12 +46,20 @@
     gap: 12px; margin-top: 16px;
   }
   .card { position: relative; border-radius: 8px; overflow: hidden; background: #222; aspect-ratio: 1; }
-  .card img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .card .del-btn {
-    position: absolute; top: 4px; right: 4px; background: rgba(0,0,0,.6); color: #fff;
-    border: none; border-radius: 6px; width: 28px; height: 28px; cursor: pointer; font-size: 16px;
+  .card.hidden-item { opacity: 0.35; }
+  .card img, .card video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .card .badge {
+    position: absolute; top: 4px; left: 4px; background: rgba(0,0,0,.6); color: #fff;
+    font-size: 11px; padding: 2px 6px; border-radius: 4px;
   }
+  .card .top-btn {
+    position: absolute; top: 4px; background: rgba(0,0,0,.6); color: #fff;
+    border: none; border-radius: 6px; width: 28px; height: 28px; cursor: pointer; font-size: 15px;
+  }
+  .card .del-btn { right: 4px; }
   .card .del-btn:hover { background: #c62828; }
+  .card .hide-btn { right: 36px; }
+  .card .hide-btn:hover { background: rgba(76,175,80,.8); }
   .card .order-controls {
     position: absolute; left: 4px; bottom: 4px; display: flex; gap: 4px;
   }
@@ -65,28 +75,40 @@
 </head>
 <body>
   <h1>PixelFrame</h1>
-  <p class="sub">Bilder hochladen → Diashow ansehen unter <a class="frame-link" href="/frame">/frame</a></p>
+  <p class="sub">Bilder &amp; Videos hochladen → Diashow ansehen unter <a class="frame-link" href="/frame">/frame</a></p>
 
   <div id="drop">
-    <p>Bilder hierher ziehen oder klicken zum Auswählen</p>
-    <input id="file-input" type="file" accept=".jpg,.jpeg,.png,.webp" multiple>
+    <p>Bilder/Videos hierher ziehen oder klicken zum Auswählen</p>
+    <input id="file-input" type="file" accept=".jpg,.jpeg,.png,.webp,.mp4,.webm" multiple>
   </div>
   <div id="status"></div>
+  <p class="hint">Bilder bis 50 MB, Videos bis 300 MB. Erlaubt: JPG, PNG, WEBP, MP4, WEBM.</p>
 
-  <div id="settings">
+  <div class="panel" id="settings">
     <h2 style="width:100%; margin-bottom:0;">Diashow-Einstellungen</h2>
-    <label>Anzeigedauer: <input id="interval-input" type="number" min="2" step="1" value="8"> Sek.</label>
+    <label>Anzeigedauer (Bilder): <input id="interval-input" type="number" min="2" step="1" value="8"> Sek.</label>
     <label><input id="shuffle-input" type="checkbox"> Zufällige Reihenfolge</label>
     <button id="save-settings">Speichern</button>
-    <span id="settings-status"></span>
+    <span id="settings-status" class="status"></span>
+  </div>
+  <p class="hint">Videos spielen immer bis zum Ende, unabhängig von der Anzeigedauer.</p>
+
+  <div class="panel" id="admin-panel">
+    <h2 style="width:100%; margin-bottom:0;">Admin-Passwort ändern</h2>
+    <label>Neues Passwort: <input id="new-password" type="password" placeholder="mind. 4 Zeichen"></label>
+    <button id="save-password">Ändern</button>
+    <span id="password-status" class="status"></span>
   </div>
 
-  <h2 style="margin-top:28px;">Bilder &amp; Reihenfolge (↑/↓ zum Verschieben)</h2>
+  <h2 style="margin-top:28px;">Bilder &amp; Videos (↑/↓ verschieben, 👁 ausblenden)</h2>
   <div id="grid"></div>
-  <p id="empty-msg" class="empty" hidden>Noch keine Bilder hochgeladen.</p>
+  <p id="empty-msg" class="empty" hidden>Noch keine Bilder/Videos hochgeladen.</p>
 
 <script>
 (function () {
+  var VIDEO_EXT = ['mp4', 'webm'];
+  function isVideo(name) { return VIDEO_EXT.indexOf(name.split('.').pop().toLowerCase()) !== -1; }
+
   var drop = document.getElementById('drop');
   var input = document.getElementById('file-input');
   var grid = document.getElementById('grid');
@@ -96,10 +118,19 @@
   var shuffleInput = document.getElementById('shuffle-input');
   var saveSettingsBtn = document.getElementById('save-settings');
   var settingsStatus = document.getElementById('settings-status');
+  var newPasswordInput = document.getElementById('new-password');
+  var savePasswordBtn = document.getElementById('save-password');
+  var passwordStatus = document.getElementById('password-status');
 
   function setStatus(msg, isError) {
     statusEl.textContent = msg || '';
     statusEl.style.color = isError ? '#e57373' : '#4caf50';
+  }
+
+  function flash(el, msg, ok) {
+    el.textContent = msg;
+    el.style.color = ok ? '#4caf50' : '#e57373';
+    setTimeout(function () { el.textContent = ''; }, 3000);
   }
 
   // ---------- Einstellungen ----------
@@ -119,48 +150,88 @@
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
+    }).then(function (r) { flash(settingsStatus, r.ok ? 'Gespeichert ✓' : 'Fehler beim Speichern', r.ok); });
+  });
+
+  // ---------- Admin-Passwort ----------
+  savePasswordBtn.addEventListener('click', function () {
+    var value = newPasswordInput.value;
+    if (value.length < 4) { flash(passwordStatus, 'Mindestens 4 Zeichen', false); return; }
+    fetch('/api/admin/password', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ new_password: value })
     }).then(function (r) {
-      settingsStatus.textContent = r.ok ? 'Gespeichert ✓' : 'Fehler beim Speichern';
-      settingsStatus.style.color = r.ok ? '#4caf50' : '#e57373';
-      setTimeout(function () { settingsStatus.textContent = ''; }, 2500);
+      flash(passwordStatus, r.ok ? 'Geändert ✓ (beim nächsten Laden neu einloggen)' : 'Fehler', r.ok);
+      if (r.ok) newPasswordInput.value = '';
     });
   });
 
-  // ---------- Bilder & Reihenfolge ----------
-  function saveOrder(list) {
-    return fetch('/api/order', {
+  // ---------- Bilder/Videos, Reihenfolge & Sichtbarkeit ----------
+  var currentMedia = []; // [{name, hidden}] – kompletter Stand fürs Speichern
+
+  function saveMedia(list) {
+    return fetch('/api/media', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ images: list })
+      body: JSON.stringify({ media: list })
     });
   }
 
-  function moveImage(list, from, to) {
-    var arr = list.slice();
+  function moveItem(from, to) {
+    var arr = currentMedia.slice();
     var tmp = arr[from]; arr[from] = arr[to]; arr[to] = tmp;
-    saveOrder(arr).then(loadImages);
+    saveMedia(arr).then(loadMedia);
   }
 
-  function loadImages() {
-    fetch('/api/images').then(function (r) { return r.json(); }).then(function (data) {
-      grid.innerHTML = '';
-      var images = data.images || [];
-      emptyMsg.hidden = images.length > 0;
-      images.forEach(function (name, idx) {
-        var card = document.createElement('div');
-        card.className = 'card';
+  function toggleHidden(idx) {
+    var arr = currentMedia.slice();
+    arr[idx] = { name: arr[idx].name, hidden: !arr[idx].hidden };
+    saveMedia(arr).then(loadMedia);
+  }
 
-        var img = document.createElement('img');
-        img.src = '/images/' + encodeURIComponent(name);
-        img.loading = 'lazy';
-        card.appendChild(img);
+  function loadMedia() {
+    fetch('/api/media').then(function (r) { return r.json(); }).then(function (data) {
+      grid.innerHTML = '';
+      currentMedia = data.media || [];
+      emptyMsg.hidden = currentMedia.length > 0;
+
+      currentMedia.forEach(function (item, idx) {
+        var name = item.name;
+        var card = document.createElement('div');
+        card.className = 'card' + (item.hidden ? ' hidden-item' : '');
+
+        var url = '/images/' + encodeURIComponent(name);
+        if (isVideo(name)) {
+          var video = document.createElement('video');
+          video.src = url + '#t=0.1'; // zeigt einen Frame als Vorschau, ohne extra Thumbnail-Erzeugung
+          video.muted = true;
+          video.preload = 'metadata';
+          card.appendChild(video);
+          var badge = document.createElement('span');
+          badge.className = 'badge';
+          badge.textContent = '▶ Video';
+          card.appendChild(badge);
+        } else {
+          var img = document.createElement('img');
+          img.src = url;
+          img.loading = 'lazy';
+          card.appendChild(img);
+        }
 
         var del = document.createElement('button');
-        del.className = 'del-btn';
+        del.className = 'top-btn del-btn';
         del.textContent = '✕';
         del.title = 'Löschen';
-        del.addEventListener('click', function () { deleteImage(name); });
+        del.addEventListener('click', function () { deleteMedia(name); });
         card.appendChild(del);
+
+        var hideBtn = document.createElement('button');
+        hideBtn.className = 'top-btn hide-btn';
+        hideBtn.textContent = item.hidden ? '🙈' : '👁';
+        hideBtn.title = item.hidden ? 'Einblenden' : 'Ausblenden';
+        hideBtn.addEventListener('click', function () { toggleHidden(idx); });
+        card.appendChild(hideBtn);
 
         var controls = document.createElement('div');
         controls.className = 'order-controls';
@@ -169,14 +240,14 @@
         up.textContent = '↑';
         up.title = 'Nach vorne';
         up.disabled = idx === 0;
-        up.addEventListener('click', function () { moveImage(images, idx, idx - 1); });
+        up.addEventListener('click', function () { moveItem(idx, idx - 1); });
         controls.appendChild(up);
 
         var down = document.createElement('button');
         down.textContent = '↓';
         down.title = 'Nach hinten';
-        down.disabled = idx === images.length - 1;
-        down.addEventListener('click', function () { moveImage(images, idx, idx + 1); });
+        down.disabled = idx === currentMedia.length - 1;
+        down.addEventListener('click', function () { moveItem(idx, idx + 1); });
         controls.appendChild(down);
 
         card.appendChild(controls);
@@ -185,15 +256,15 @@
     });
   }
 
-  function deleteImage(name) {
+  function deleteMedia(name) {
     fetch('/api/images/' + encodeURIComponent(name), { method: 'DELETE' })
-      .then(function () { loadImages(); });
+      .then(function () { loadMedia(); });
   }
 
   function uploadFiles(files) {
     var list = Array.prototype.slice.call(files);
     if (!list.length) return;
-    setStatus('Lade ' + list.length + ' Bild(er) hoch …');
+    setStatus('Lade ' + list.length + ' Datei(en) hoch …');
     var done = 0, failed = 0;
     list.forEach(function (file) {
       var fd = new FormData();
@@ -205,7 +276,7 @@
           done++;
           if (done === list.length) {
             setStatus(failed ? (failed + ' von ' + list.length + ' fehlgeschlagen') : 'Fertig!', !!failed);
-            loadImages();
+            loadMedia();
           }
         });
     });
@@ -225,7 +296,7 @@
   });
 
   loadSettings();
-  loadImages();
+  loadMedia();
 })();
 </script>
 </body>

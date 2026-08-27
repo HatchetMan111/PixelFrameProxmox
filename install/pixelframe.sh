@@ -26,7 +26,7 @@ if [[ -z "${CTID:-}" && -f "$STATE_FILE" ]]; then
 fi
 CTID="${CTID:-200}"
 CT_HOSTNAME="${CT_HOSTNAME:-pixelframe}"
-DISK_GB="${DISK_GB:-2}"
+DISK_GB="${DISK_GB:-8}"
 RAM_MB="${RAM_MB:-512}"
 CORES="${CORES:-1}"
 BRIDGE="${BRIDGE:-vmbr0}"

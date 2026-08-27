@@ -9,11 +9,12 @@
 <style>
   html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden; }
   #stage { position: relative; width: 100vw; height: 100vh; }
-  #stage img {
-    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-    object-fit: contain; opacity: 0; transition: opacity 1.2s ease-in-out;
+  .slide {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    opacity: 0; transition: opacity 1.2s ease-in-out;
   }
-  #stage img.visible { opacity: 1; }
+  .slide.visible { opacity: 1; }
+  .slide img, .slide video { max-width: 100%; max-height: 100%; object-fit: contain; }
   #empty {
     position: absolute; inset: 0;
     color: #666; font-family: system-ui, sans-serif; font-size: 1.1rem; text-align: center; padding: 0 20px;
@@ -33,8 +34,8 @@
 </head>
 <body>
   <div id="stage">
-    <img id="img-a" alt="">
-    <img id="img-b" alt="">
+    <div class="slide" id="slide-a"></div>
+    <div class="slide" id="slide-b"></div>
     <div id="empty" hidden>Noch keine Bilder. Bitte unter /upload hochladen.</div>
   </div>
   <button id="fs-btn">⤢ Vollbild</button>
@@ -43,18 +44,24 @@
 (function () {
   var params = new URLSearchParams(location.search);
   var REFRESH_MS = 60000; // Bilderliste & Einstellungen alle 60s neu laden
+  var VIDEO_EXT = ['mp4', 'webm'];
 
-  var imgA = document.getElementById('img-a');
-  var imgB = document.getElementById('img-b');
+  var slideA = document.getElementById('slide-a');
+  var slideB = document.getElementById('slide-b');
   var emptyEl = document.getElementById('empty');
   var fsBtn = document.getElementById('fs-btn');
-  var front = imgA, back = imgB;
+  var front = slideA, back = slideB;
 
   var images = [];
   var order = [];
   var pos = 0;
   var settings = { interval: 8, shuffle: false };
-  var slideTimer = null;
+  var advanceTimer = null;
+
+  function isVideo(name) {
+    var ext = name.split('.').pop().toLowerCase();
+    return VIDEO_EXT.indexOf(ext) !== -1;
+  }
 
   function shuffleArray(arr) {
     var a = arr.slice();
@@ -70,7 +77,26 @@
     pos = 0;
   }
 
+  function clearSlide(el) {
+    // Falls dort ein Video lief: stoppen, sonst spielen mehrere im Hintergrund weiter.
+    var video = el.querySelector('video');
+    if (video) { video.pause(); video.removeAttribute('src'); video.load(); }
+    el.innerHTML = '';
+  }
+
+  function swapIn() {
+    front.classList.remove('visible');
+    back.classList.add('visible');
+    var t = front; front = back; back = t;
+  }
+
+  function scheduleAdvance(ms) {
+    if (advanceTimer) clearTimeout(advanceTimer);
+    advanceTimer = setTimeout(showNext, ms);
+  }
+
   function showNext() {
+    if (advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
     if (!order.length) {
       emptyEl.hidden = false;
       return;
@@ -80,18 +106,34 @@
     pos++;
     if (pos >= order.length && settings.shuffle) buildOrder();
 
-    back.src = '/images/' + encodeURIComponent(name);
-    back.onload = function () {
-      front.classList.remove('visible');
-      back.classList.add('visible');
-      var t = front; front = back; back = t;
-    };
-  }
+    clearSlide(back);
+    var url = '/images/' + encodeURIComponent(name);
 
-  function restartSlideTimer() {
-    if (slideTimer) clearInterval(slideTimer);
-    var ms = Math.max(2, settings.interval || 8) * 1000;
-    slideTimer = setInterval(showNext, ms);
+    if (isVideo(name)) {
+      var video = document.createElement('video');
+      video.muted = true;
+      video.playsInline = true;
+      video.autoplay = true;
+      // Video spielt bis zum Ende, dann sofort weiter (nicht an feste Anzeigedauer gebunden).
+      video.addEventListener('loadeddata', function () {
+        swapIn();
+        video.play().catch(function () {});
+      });
+      video.addEventListener('ended', function () { scheduleAdvance(0); });
+      video.addEventListener('error', function () { scheduleAdvance(0); });
+      video.src = url;
+      back.appendChild(video);
+    } else {
+      var img = document.createElement('img');
+      img.alt = '';
+      img.onload = function () {
+        swapIn();
+        scheduleAdvance(Math.max(2, settings.interval || 8) * 1000);
+      };
+      img.onerror = function () { scheduleAdvance(0); };
+      img.src = url;
+      back.appendChild(img);
+    }
   }
 
   function refreshAll() {
@@ -105,17 +147,17 @@
 
       var imagesChanged = nextImages.length !== images.length ||
         nextImages.some(function (n, i) { return n !== images[i]; });
-      var intervalChanged = nextSettings.interval !== settings.interval;
       var shuffleChanged = nextSettings.shuffle !== settings.shuffle;
 
       images = nextImages;
       settings = nextSettings;
 
       if (imagesChanged || shuffleChanged || !order.length) buildOrder();
-      if (intervalChanged || shuffleChanged || !slideTimer) restartSlideTimer();
 
-      // Erstes Bild sofort zeigen statt auf den ersten Timer-Tick zu warten –
-      // sonst bleibt der Bildschirm bei z. B. 100s Anzeigedauer 100s lang schwarz.
+      // Erstes Bild/Video sofort zeigen statt auf einen Timer zu warten –
+      // sonst bleibt der Bildschirm bei z. B. 100s Anzeigedauer lange schwarz.
+      // Danach plant jede Anzeige selbst ihren nächsten Wechsel (Bild: nach
+      // settings.interval; Video: sobald es zu Ende ist).
       if (wasEmpty && order.length) showNext();
     }).catch(function () { /* Netzwerkfehler ignorieren, alten Stand weiterverwenden */ });
   }

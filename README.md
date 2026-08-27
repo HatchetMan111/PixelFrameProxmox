@@ -1,8 +1,9 @@
 # PixelFrame
 
-Digitaler Bilderrahmen für ein altes Tablet im Heimnetz. Bilder per
-Weboberfläche hochladen, Diashow läuft im Browser des Tablets. Läuft
-vollständig lokal, keine Cloud, keine Registrierung.
+Digitaler Bilderrahmen für ein altes Tablet im Heimnetz. Bilder und Videos
+per Weboberfläche hochladen, Diashow läuft im Browser des Tablets. Läuft
+vollständig lokal, keine Cloud, keine Registrierung. Admin-Bereich per
+Passwort geschützt, die Tablet-Anzeige selbst braucht kein Login.
 
 ## Installation (Proxmox-Host, als root)
 
@@ -21,7 +22,7 @@ CTID=201 CT_HOSTNAME=bilderrahmen PORT=8095 \
 |---|---|---|
 | `CTID` | `200` | Container-ID |
 | `CT_HOSTNAME` | `pixelframe` | Hostname des Containers |
-| `DISK_GB` | `2` | Festplattengröße in GB |
+| `DISK_GB` | `8` | Festplattengröße in GB (Videos brauchen mehr Platz als Bilder) |
 | `RAM_MB` | `512` | Arbeitsspeicher in MB |
 | `CORES` | `1` | vCPU-Anzahl |
 | `BRIDGE` | `vmbr0` | Netzwerk-Bridge |
@@ -56,12 +57,23 @@ Optional lässt sich das weiterhin einmalig überschreiben: `/frame?interval=5&s
 
 ## Admin-Panel (`/upload`)
 
+Geschützt mit HTTP Basic Auth – der Browser fragt automatisch nach
+Zugangsdaten (Benutzername ist beliebig, nur das Passwort zählt).
+**Standard-Passwort: `admin`** – direkt im Panel unter "Admin-Passwort
+ändern" anpassbar. `/frame` (die Tablet-Anzeige) bleibt bewusst ohne Login.
+
+- **Bilder & Videos:** JPG/PNG/WEBP (bis 50 MB) und MP4/WEBM (bis 300 MB).
+  Videos werden unverändert gespeichert (kein Transcoding) und in der
+  Diashow bis zum Ende abgespielt, unabhängig von der Anzeigedauer.
 - **Anzeigedauer:** Sekunden pro Bild eintragen, "Speichern" klicken –
   wirkt auf allen offenen `/frame`-Ansichten spätestens nach der nächsten
-  Aktualisierung (max. 60s).
+  Aktualisierung (max. 60s). Gilt nur für Bilder, nicht für Videos.
 - **Zufällige Reihenfolge:** Checkbox für Shuffle statt fester Reihenfolge.
-- **Reihenfolge ändern:** ↑/↓-Buttons an jedem Bild verschieben es in der
-  Diashow-Reihenfolge nach vorne/hinten.
+- **Reihenfolge ändern:** ↑/↓-Buttons an jedem Bild/Video verschieben es in
+  der Diashow-Reihenfolge nach vorne/hinten.
+- **Ausblenden:** 👁-Button blendet ein Bild/Video aus der Diashow aus, ohne
+  es zu löschen (z. B. für Fotos, die nur zeitweise nicht gezeigt werden
+  sollen). Erneuter Klick blendet wieder ein.
 
 ## Update
 
@@ -75,19 +87,29 @@ pct exec <CTID> -- bash -c "cd /opt/pixelframe && git pull && ./venv/bin/pip ins
 pct stop <CTID> && pct destroy <CTID>
 ```
 
-Entfernt den kompletten Container inkl. aller hochgeladenen Bilder.
+Entfernt den kompletten Container inkl. aller hochgeladenen Bilder/Videos.
+
+**Hinweis für bestehende Installationen:** Der Standard für `DISK_GB` wurde
+wegen der Video-Unterstützung von 2 auf 8 GB angehoben. Bereits laufende
+Container behalten ihre ursprüngliche Disk-Größe (nachträglich per
+`pct resize <CTID> rootfs +6G` erweiterbar); nur Neuinstallationen nutzen
+automatisch den neuen Default.
 
 ## Architektur
 
-Keine Datenbank – das Dateisystem ist die Datenbank. Jedes hochgeladene Bild
-wird beim Upload einmalig auf max. 1920px verkleinert, EXIF-korrigiert und
-als JPEG gespeichert (`app/main.py`). Reihenfolge (`data/order.json`) und
-Anzeige-Einstellungen (`data/settings.json`) liegen als kleine JSON-Dateien
-neben dem Bilder-Ordner; `order.json` heilt sich automatisch (neue Bilder
-werden angehängt, gelöschte entfernt). Zwei Seiten: `/upload` (Verwaltung,
-Einstellungen, Reihenfolge) und `/frame` (Diashow, pollt alle 60s neue
-Bilder/Einstellungen). Kein Login – Absicherung über LAN-only (ufw im
-Container).
+Keine Datenbank – das Dateisystem ist die Datenbank. Bilder werden beim
+Upload einmalig auf max. 1920px verkleinert, EXIF-korrigiert und als JPEG
+gespeichert; Videos werden unverändert übernommen (`app/main.py`).
+Reihenfolge + Sichtbarkeit (`data/order.json`) und Anzeige-Einstellungen
+(`data/settings.json`) liegen als kleine JSON-Dateien neben dem Medien-Ordner;
+`order.json` heilt sich automatisch (neue Dateien werden angehängt, gelöschte
+entfernt). Admin-Passwort-Hash liegt in `data/admin.json` (SHA-256, niemals
+im Klartext).
+
+Zwei Seiten: `/upload` (Verwaltung, per Passwort geschützt) und `/frame`
+(Diashow, öffentlich/ohne Login – pollt alle 60s neue Bilder/Einstellungen,
+zeigt Bilder für die eingestellte Anzeigedauer, Videos bis zum Ende). LAN-only
+zusätzlich über ufw im Container.
 
 ## Entwicklung / Tests
 
@@ -95,8 +117,9 @@ Container).
 python3 -m venv venv && ./venv/bin/pip install -r requirements-dev.txt
 ./venv/bin/pytest tests/ -v
 
-# Frontend-Regressionstest (Node, keine Abhängigkeiten nötig):
+# Frontend-Regressionstests (Node, keine Abhängigkeiten nötig):
 node tests/js/frame_first_image.test.js
+node tests/js/frame_video_advance.test.js
 ```
 
 ## Lizenz
