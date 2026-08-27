@@ -54,12 +54,28 @@ Object.defineProperty(FakeElement.prototype, 'src', {
   },
 });
 
-function installFakeBrowserGlobals() {
+function makeEventTarget() {
+  var listeners = {};
+  return {
+    addEventListener: function (type, cb) { (listeners[type] = listeners[type] || []).push(cb); },
+    removeEventListener: function () {},
+    dispatch: function (type) { (listeners[type] || []).slice().forEach(function (cb) { cb(); }); },
+  };
+}
+
+function installFakeBrowserGlobals(options) {
+  options = options || {};
   var containers = {};
+  var documentElement = options.documentElement || {};
+  var docEvents = makeEventTarget();
+  var winEvents = makeEventTarget();
+
   global.document = {
     fullscreenElement: null,
-    documentElement: {},
-    addEventListener: function () {},
+    documentElement: documentElement,
+    addEventListener: docEvents.addEventListener,
+    removeEventListener: docEvents.removeEventListener,
+    dispatch: docEvents.dispatch,
     getElementById: function (id) {
       if (!containers[id]) containers[id] = new FakeElement('div');
       return containers[id];
@@ -71,6 +87,11 @@ function installFakeBrowserGlobals() {
   global.URLSearchParams = function () {
     return { has: function () { return false; }, get: function () { return null; } };
   };
+  global.innerWidth = options.innerWidth || 400;
+  global.innerHeight = options.innerHeight || 800;
+  global.addEventListener = winEvents.addEventListener;
+  global.removeEventListener = winEvents.removeEventListener;
+  global.dispatchWindowEvent = winEvents.dispatch;
   global.window = global;
 }
 

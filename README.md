@@ -47,9 +47,12 @@ Diashow: http://<Container-IP>:8090/frame?interval=8&shuffle=1
    `chrome --kiosk http://<Container-IP>:8090/frame`
 2. Als Startseite/Autostart hinterlegen, Bildschirm-Standby deaktivieren
 3. Die Seite versucht zusätzlich automatisch den Vollbildmodus (Fullscreen
-   API) und hält den Bildschirm wach (Screen Wake Lock), sofern der Browser
-   das unterstützt. Ein kleiner "⤢ Vollbild"-Button bleibt als manueller
-   Fallback sichtbar, falls der Browser eine Nutzer-Geste verlangt.
+   API) beim Drehen ins Querformat (wie z. B. bei YouTube) und hält den
+   Bildschirm wach (Screen Wake Lock), sofern der Browser das unterstützt.
+   Ein kleiner "⤢ Vollbild"-Button bleibt als manueller Fallback sichtbar –
+   unterstützt der Browser Vollbild gar nicht (z. B. älteres iOS Safari) oder
+   schlägt der Versuch fehl, blendet sich der Button automatisch aus, statt
+   nutzlos angezeigt zu bleiben.
 
 Anzeigedauer und Reihenfolge werden im Admin-Panel unter `/upload`
 eingestellt (siehe unten) – `/frame` braucht dafür keine URL-Parameter mehr.
@@ -120,6 +123,7 @@ python3 -m venv venv && ./venv/bin/pip install -r requirements-dev.txt
 # Frontend-Regressionstests (Node, keine Abhängigkeiten nötig):
 node tests/js/frame_first_image.test.js
 node tests/js/frame_video_advance.test.js
+node tests/js/frame_fullscreen.test.js
 ```
 
 ## Lizenz

@@ -168,20 +168,65 @@
   if (params.has('shuffle')) settings.shuffle = params.get('shuffle') === '1';
 
   // ---------- Vollbild ----------
-  function updateFsButton() {
-    fsBtn.hidden = !!document.fullscreenElement;
+  // Browser-Unterstützung ist auf Mobilgeräten sehr uneinheitlich (iOS Safari
+  // z. B. teils gar nicht, teils nur mit Vendor-Präfix). Prinzip: Button nur
+  // zeigen, wenn er wirklich etwas bewirken kann – sonst ausblenden, statt
+  // einen kaputten Button stehen zu lassen.
+  function fullscreenRequestFn() {
+    var el = document.documentElement;
+    return el.requestFullscreen || el.webkitRequestFullscreen || el.webkitRequestFullScreen ||
+      el.mozRequestFullScreen || el.msRequestFullscreen || null;
   }
-  fsBtn.addEventListener('click', function () {
-    if (document.documentElement.requestFullscreen) {
-      document.documentElement.requestFullscreen().catch(function () {});
+
+  function currentFullscreenElement() {
+    return document.fullscreenElement || document.webkitFullscreenElement ||
+      document.webkitCurrentFullScreenElement || document.mozFullScreenElement ||
+      document.msFullscreenElement || null;
+  }
+
+  function requestFullscreen() {
+    var fn = fullscreenRequestFn();
+    if (!fn) return Promise.reject(new Error('Fullscreen API nicht unterstützt'));
+    try {
+      var result = fn.call(document.documentElement);
+      return (result && typeof result.catch === 'function') ? result : Promise.resolve();
+    } catch (e) {
+      return Promise.reject(e);
     }
-  });
-  document.addEventListener('fullscreenchange', updateFsButton);
-  updateFsButton();
-  // Automatischer Versuch (klappt nur ohne Nutzer-Geste in wenigen Browsern/
-  // Kiosk-Apps) – sonst bleibt der Button als manueller Fallback sichtbar.
-  if (document.documentElement.requestFullscreen) {
-    document.documentElement.requestFullscreen().catch(function () {});
+  }
+
+  function updateFsButton() {
+    fsBtn.hidden = !!currentFullscreenElement();
+  }
+
+  if (!fullscreenRequestFn()) {
+    // Kein Support in irgendeiner Form (z. B. älteres iOS Safari) -> Button
+    // erst gar nicht anzeigen, statt einen nutzlosen Button zu zeigen.
+    fsBtn.hidden = true;
+  } else {
+    fsBtn.addEventListener('click', function () {
+      requestFullscreen().catch(function () {
+        // API vorhanden, Aufruf schlägt aber fehl (z. B. Browser-Policy) ->
+        // Button dauerhaft ausblenden statt weiter einen kaputten Button zu zeigen.
+        fsBtn.hidden = true;
+      });
+    });
+    ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange']
+      .forEach(function (evt) { document.addEventListener(evt, updateFsButton); });
+    updateFsButton();
+
+    // Best-effort wie bei YouTube: beim Drehen ins Querformat automatisch
+    // versuchen, in den Vollbildmodus zu wechseln. Nicht in jedem Browser
+    // garantiert (manche verlangen eine direkte Nutzer-Geste wie einen
+    // Klick) – schlägt es fehl, bleibt der Button einfach als Fallback stehen.
+    window.addEventListener('orientationchange', function () {
+      setTimeout(function () {
+        var isLandscape = window.innerWidth > window.innerHeight;
+        if (isLandscape && !currentFullscreenElement()) {
+          requestFullscreen().catch(function () {});
+        }
+      }, 300);
+    });
   }
 
   // ---------- Bildschirm wach halten ----------
