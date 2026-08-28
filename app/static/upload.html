@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#4caf50">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
 <title>PixelFrame – Verwalten</title>
 <style>
   :root { color-scheme: dark; }
@@ -31,13 +34,20 @@
   }
   .panel label { display: flex; align-items: center; gap: 6px; font-size: 0.9rem; color: #ccc; }
   .panel input[type=number] { width: 70px; padding: 6px; border-radius: 6px; border: 1px solid #444; background: #111; color: #eee; }
-  .panel input[type=password] { padding: 6px; border-radius: 6px; border: 1px solid #444; background: #111; color: #eee; }
+  .panel input[type=password], .panel input[type=time] { padding: 6px; border-radius: 6px; border: 1px solid #444; background: #111; color: #eee; }
   .panel button {
     background: #4caf50; color: #111; border: none; border-radius: 6px; padding: 8px 14px;
     cursor: pointer; font-weight: 600;
   }
   .panel button:hover { background: #66bb6a; }
   .panel .status { font-size: 0.85rem; }
+  .panel .sub-hint { width: 100%; color: #777; font-size: 0.78rem; margin-top: -8px; }
+
+  #storage-bar-track { width: 100%; height: 8px; background: #2a2a2a; border-radius: 4px; overflow: hidden; margin-top: 4px; }
+  #storage-bar-fill { height: 100%; background: #4caf50; width: 0%; transition: width .3s, background .3s; }
+  #storage-bar-fill.warn { background: #ffb300; }
+  #storage-bar-fill.crit { background: #e57373; }
+  #storage-text { font-size: 0.85rem; color: #ccc; }
 
   #status { margin-top: 12px; font-size: 0.85rem; color: #4caf50; min-height: 1.2em; }
 
@@ -82,16 +92,28 @@
     <input id="file-input" type="file" accept=".jpg,.jpeg,.png,.webp,.mp4,.webm" multiple>
   </div>
   <div id="status"></div>
-  <p class="hint">Bilder bis 50 MB, Videos bis 300 MB. Erlaubt: JPG, PNG, WEBP, MP4, WEBM.</p>
+  <p class="hint">Bilder bis 50 MB, Videos bis 300 MB. Erlaubt: JPG, PNG, WEBP, MP4, WEBM. Auf Android kann auch direkt aus der Fotos-App über "Teilen" hochgeladen werden, sobald diese Seite über HTTPS läuft (siehe README).</p>
+
+  <div class="panel" id="storage-panel">
+    <h2 style="width:100%; margin-bottom:0;">Speicherplatz</h2>
+    <div style="width:100%;">
+      <div id="storage-text">wird geladen …</div>
+      <div id="storage-bar-track"><div id="storage-bar-fill"></div></div>
+    </div>
+  </div>
 
   <div class="panel" id="settings">
     <h2 style="width:100%; margin-bottom:0;">Diashow-Einstellungen</h2>
     <label>Anzeigedauer (Bilder): <input id="interval-input" type="number" min="2" step="1" value="8"> Sek.</label>
     <label><input id="shuffle-input" type="checkbox"> Zufällige Reihenfolge</label>
+    <label><input id="kenburns-input" type="checkbox"> Zoom-Effekt (Ken Burns)</label>
+    <p class="sub-hint">Videos spielen immer bis zum Ende, unabhängig von der Anzeigedauer. Der Zoom-Effekt gilt nur für Bilder.</p>
+    <label><input id="schedule-enabled-input" type="checkbox"> Zeitplan aktiv (Bildschirm nachts aus)</label>
+    <label>Von <input id="schedule-start-input" type="time" value="22:00"></label>
+    <label>bis <input id="schedule-end-input" type="time" value="07:00"></label>
     <button id="save-settings">Speichern</button>
     <span id="settings-status" class="status"></span>
   </div>
-  <p class="hint">Videos spielen immer bis zum Ende, unabhängig von der Anzeigedauer.</p>
 
   <div class="panel" id="admin-panel">
     <h2 style="width:100%; margin-bottom:0;">Admin-Passwort ändern</h2>
@@ -116,11 +138,17 @@
   var emptyMsg = document.getElementById('empty-msg');
   var intervalInput = document.getElementById('interval-input');
   var shuffleInput = document.getElementById('shuffle-input');
+  var kenburnsInput = document.getElementById('kenburns-input');
+  var scheduleEnabledInput = document.getElementById('schedule-enabled-input');
+  var scheduleStartInput = document.getElementById('schedule-start-input');
+  var scheduleEndInput = document.getElementById('schedule-end-input');
   var saveSettingsBtn = document.getElementById('save-settings');
   var settingsStatus = document.getElementById('settings-status');
   var newPasswordInput = document.getElementById('new-password');
   var savePasswordBtn = document.getElementById('save-password');
   var passwordStatus = document.getElementById('password-status');
+  var storageText = document.getElementById('storage-text');
+  var storageBarFill = document.getElementById('storage-bar-fill');
 
   function setStatus(msg, isError) {
     statusEl.textContent = msg || '';
@@ -133,18 +161,38 @@
     setTimeout(function () { el.textContent = ''; }, 3000);
   }
 
+  // ---------- Speicherplatz ----------
+  function formatGB(bytes) { return (bytes / (1024 * 1024 * 1024)).toFixed(1); }
+
+  function loadStorage() {
+    fetch('/api/storage').then(function (r) { return r.json(); }).then(function (s) {
+      var pct = s.total_bytes ? Math.round((s.used_bytes / s.total_bytes) * 100) : 0;
+      storageText.textContent = formatGB(s.used_bytes) + ' GB von ' + formatGB(s.total_bytes) + ' GB belegt (' + pct + '%)';
+      storageBarFill.style.width = Math.min(100, pct) + '%';
+      storageBarFill.className = pct >= 90 ? 'crit' : (pct >= 75 ? 'warn' : '');
+    }).catch(function () { storageText.textContent = 'Speicherplatz-Info nicht verfügbar'; });
+  }
+
   // ---------- Einstellungen ----------
   function loadSettings() {
     fetch('/api/settings').then(function (r) { return r.json(); }).then(function (s) {
       intervalInput.value = s.interval;
       shuffleInput.checked = !!s.shuffle;
+      kenburnsInput.checked = s.kenburns !== false;
+      scheduleEnabledInput.checked = !!s.schedule_enabled;
+      scheduleStartInput.value = s.schedule_start || '22:00';
+      scheduleEndInput.value = s.schedule_end || '07:00';
     });
   }
 
   saveSettingsBtn.addEventListener('click', function () {
     var body = {
       interval: parseFloat(intervalInput.value) || 8,
-      shuffle: shuffleInput.checked
+      shuffle: shuffleInput.checked,
+      kenburns: kenburnsInput.checked,
+      schedule_enabled: scheduleEnabledInput.checked,
+      schedule_start: scheduleStartInput.value || '22:00',
+      schedule_end: scheduleEndInput.value || '07:00'
     };
     fetch('/api/settings', {
       method: 'PUT',
@@ -258,7 +306,7 @@
 
   function deleteMedia(name) {
     fetch('/api/images/' + encodeURIComponent(name), { method: 'DELETE' })
-      .then(function () { loadMedia(); });
+      .then(function () { loadMedia(); loadStorage(); });
   }
 
   function uploadFiles(files) {
@@ -277,6 +325,7 @@
           if (done === list.length) {
             setStatus(failed ? (failed + ' von ' + list.length + ' fehlgeschlagen') : 'Fertig!', !!failed);
             loadMedia();
+            loadStorage();
           }
         });
     });
@@ -297,6 +346,7 @@
 
   loadSettings();
   loadMedia();
+  loadStorage();
 })();
 </script>
 </body>

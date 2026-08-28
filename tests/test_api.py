@@ -106,14 +106,31 @@ def test_settings_default_and_update(tmp_path):
     client = _client(tmp_path)
 
     resp = client.get("/api/settings")  # öffentlich
-    assert resp.json() == {"interval": 8, "shuffle": False}
+    assert resp.json() == {
+        "interval": 8, "shuffle": False, "kenburns": True,
+        "schedule_enabled": False, "schedule_start": "22:00", "schedule_end": "07:00",
+    }
 
-    resp = client.put("/api/settings", json={"interval": 12, "shuffle": True}, auth=AUTH)
+    body = {
+        "interval": 12, "shuffle": True, "kenburns": False,
+        "schedule_enabled": True, "schedule_start": "23:00", "schedule_end": "06:30",
+    }
+    resp = client.put("/api/settings", json=body, auth=AUTH)
     assert resp.status_code == 200
-    assert resp.json() == {"interval": 12, "shuffle": True}
+    assert resp.json() == body
 
     resp = client.get("/api/settings")
-    assert resp.json() == {"interval": 12, "shuffle": True}
+    assert resp.json() == body
+
+
+def test_settings_rejects_invalid_schedule_time(tmp_path):
+    client = _client(tmp_path)
+    body = {
+        "interval": 8, "shuffle": False, "kenburns": True,
+        "schedule_enabled": True, "schedule_start": "25:99", "schedule_end": "07:00",
+    }
+    resp = client.put("/api/settings", json=body, auth=AUTH)
+    assert resp.status_code == 400
 
 
 def test_settings_rejects_too_short_interval(tmp_path):
@@ -229,3 +246,74 @@ def test_change_password_rejects_too_short(tmp_path):
     client = _client(tmp_path)
     resp = client.put("/api/admin/password", json={"new_password": "ab"}, auth=AUTH)
     assert resp.status_code == 400
+
+
+def test_storage_endpoint(tmp_path):
+    client = _client(tmp_path)
+    resp = client.get("/api/storage")
+    assert resp.status_code == 401  # Admin-only
+
+    resp = client.get("/api/storage", auth=AUTH)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_bytes"] > 0
+    assert data["used_bytes"] >= 0
+    assert data["free_bytes"] >= 0
+
+
+def test_manifest_public_and_references_share_target(tmp_path):
+    client = _client(tmp_path)
+    resp = client.get("/manifest.json")  # öffentlich, kein Auth nötig
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["share_target"]["action"] == "/api/share-upload"
+    assert data["start_url"] == "/upload"
+    assert len(data["icons"]) == 2
+
+
+def test_icons_served_publicly(tmp_path):
+    client = _client(tmp_path)
+    resp = client.get("/icons/icon-192.png")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/png"
+
+
+def test_share_upload_requires_auth(tmp_path):
+    client = _client(tmp_path)
+    resp = client.post("/api/share-upload", files={"media": ("foto.jpg", _fake_image_bytes(), "image/jpeg")})
+    assert resp.status_code == 401
+
+
+def test_share_upload_stores_files_and_redirects(tmp_path):
+    client = _client(tmp_path)
+    resp = client.post(
+        "/api/share-upload",
+        files=[
+            ("media", ("a.jpg", _fake_image_bytes(), "image/jpeg")),
+            ("media", ("b.jpg", _fake_image_bytes(), "image/jpeg")),
+        ],
+        auth=AUTH,
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/upload"
+
+    stored = list(pixelframe.DATA_DIR.iterdir())
+    assert len(stored) == 2
+
+
+def test_share_upload_skips_invalid_file_keeps_valid(tmp_path):
+    client = _client(tmp_path)
+    resp = client.post(
+        "/api/share-upload",
+        files=[
+            ("media", ("gut.jpg", _fake_image_bytes(), "image/jpeg")),
+            ("media", ("schlecht.txt", b"kein bild", "text/plain")),
+        ],
+        auth=AUTH,
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    stored = list(pixelframe.DATA_DIR.iterdir())
+    assert len(stored) == 1
+    assert stored[0].suffix == ".jpg"

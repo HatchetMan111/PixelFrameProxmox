@@ -77,6 +77,25 @@ Zugangsdaten (Benutzername ist beliebig, nur das Passwort zählt).
 - **Ausblenden:** 👁-Button blendet ein Bild/Video aus der Diashow aus, ohne
   es zu löschen (z. B. für Fotos, die nur zeitweise nicht gezeigt werden
   sollen). Erneuter Klick blendet wieder ein.
+- **Zoom-Effekt (Ken Burns):** Bilder werden während der Anzeigedauer sanft
+  hineingezoomt (mit zufälligem Fokuspunkt), damit die Diashow weniger
+  statisch wirkt. Gilt nur für Bilder, nicht für Videos; abschaltbar.
+- **Zeitplan (Nachtruhe):** Aktivieren + Uhrzeiten "Von"/"Bis" eintragen
+  (z. B. 22:00–07:00) – der Bildschirm bleibt in diesem Zeitfenster
+  schwarz, und die App gibt den Wake Lock frei, damit das Tablet selbst in
+  den Ruhezustand gehen kann. Basiert auf der lokalen Uhrzeit des Tablets.
+- **Speicherplatz-Anzeige:** zeigt belegten/verfügbaren Platz auf der
+  Container-Disk, färbt sich ab 75 % gelb und ab 90 % rot.
+- **Teilen-Upload vom Handy:** `/upload` ist als installierbare Web-App
+  (PWA) mit Android-Share-Target eingerichtet – nach "Zum Startbildschirm
+  hinzufügen" erscheint PixelFrame in der "Teilen"-Liste der Fotos-App.
+  **Wichtige Einschränkung:** Das funktioniert nur über HTTPS (der
+  Registrierungsmechanismus des Browsers verlangt einen sicheren Kontext) –
+  auf dem aktuellen reinen LAN-HTTP-Setup wird Android dies vermutlich
+  *nicht* als Teilen-Ziel anbieten. Nötig wäre z. B. ein Reverse-Proxy mit
+  echtem Zertifikat oder ein Tunnel-Dienst wie Tailscale Funnel. Auf iOS
+  Safari funktioniert Web-Share-Target grundsätzlich nicht (von Apple nicht
+  implementiert), unabhängig von HTTPS.
 
 ## Update
 
@@ -109,10 +128,12 @@ Reihenfolge + Sichtbarkeit (`data/order.json`) und Anzeige-Einstellungen
 entfernt). Admin-Passwort-Hash liegt in `data/admin.json` (SHA-256, niemals
 im Klartext).
 
-Zwei Seiten: `/upload` (Verwaltung, per Passwort geschützt) und `/frame`
+Zwei Seiten: `/upload` (Verwaltung, per Passwort geschützt, als PWA mit
+Share-Target installierbar über `/manifest.json` + `/icons/*`) und `/frame`
 (Diashow, öffentlich/ohne Login – pollt alle 60s neue Bilder/Einstellungen,
-zeigt Bilder für die eingestellte Anzeigedauer, Videos bis zum Ende). LAN-only
-zusätzlich über ufw im Container.
+zeigt Bilder für die eingestellte Anzeigedauer mit optionalem Ken-Burns-Zoom,
+Videos bis zum Ende, respektiert den Zeitplan). LAN-only zusätzlich über ufw
+im Container.
 
 ## Entwicklung / Tests
 
@@ -124,6 +145,8 @@ python3 -m venv venv && ./venv/bin/pip install -r requirements-dev.txt
 node tests/js/frame_first_image.test.js
 node tests/js/frame_video_advance.test.js
 node tests/js/frame_fullscreen.test.js
+node tests/js/frame_kenburns.test.js
+node tests/js/frame_schedule.test.js
 ```
 
 ## Lizenz

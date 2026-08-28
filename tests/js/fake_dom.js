@@ -9,6 +9,7 @@ function FakeElement(tag) {
   this._listeners = {};
   this.children = [];
   this.hidden = false;
+  this.style = {};
   this.classList = {
     add: function () {},
     remove: function () {},

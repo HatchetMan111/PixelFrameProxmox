@@ -8,13 +8,18 @@
 <title>PixelFrame</title>
 <style>
   html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden; }
-  #stage { position: relative; width: 100vw; height: 100vh; }
+  #stage { position: relative; width: 100vw; height: 100vh; overflow: hidden; }
   .slide {
     position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-    opacity: 0; transition: opacity 1.2s ease-in-out;
+    opacity: 0; transition: opacity 1.2s ease-in-out; overflow: hidden;
   }
   .slide.visible { opacity: 1; }
   .slide img, .slide video { max-width: 100%; max-height: 100%; object-fit: contain; }
+  @keyframes kenburns {
+    from { transform: scale(1); }
+    to { transform: scale(1.08); }
+  }
+  .slide img.kenburns { animation-name: kenburns; animation-timing-function: linear; animation-fill-mode: forwards; }
   #empty {
     position: absolute; inset: 0;
     color: #666; font-family: system-ui, sans-serif; font-size: 1.1rem; text-align: center; padding: 0 20px;
@@ -43,8 +48,10 @@
 <script>
 (function () {
   var params = new URLSearchParams(location.search);
-  var REFRESH_MS = 60000; // Bilderliste & Einstellungen alle 60s neu laden
+  var REFRESH_MS = 60000;   // Bilderliste & Einstellungen alle 60s neu laden
+  var SCHEDULE_CHECK_MS = 30000; // Zeitplan unabhängig davon öfter neu prüfen
   var VIDEO_EXT = ['mp4', 'webm'];
+  var KENBURNS_ORIGINS = ['center', 'top left', 'top right', 'bottom left', 'bottom right'];
 
   var slideA = document.getElementById('slide-a');
   var slideB = document.getElementById('slide-b');
@@ -55,8 +62,12 @@
   var images = [];
   var order = [];
   var pos = 0;
-  var settings = { interval: 8, shuffle: false };
+  var settings = {
+    interval: 8, shuffle: false, kenburns: true,
+    schedule_enabled: false, schedule_start: '22:00', schedule_end: '07:00'
+  };
   var advanceTimer = null;
+  var scheduledOff = false;
 
   function isVideo(name) {
     var ext = name.split('.').pop().toLowerCase();
@@ -96,6 +107,7 @@
   }
 
   function showNext() {
+    if (scheduledOff) return; // Nachtruhe: keine Wechsel, bis der Zeitplan wieder aktiv schaltet
     if (advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
     if (!order.length) {
       emptyEl.hidden = false;
@@ -131,8 +143,50 @@
         scheduleAdvance(Math.max(2, settings.interval || 8) * 1000);
       };
       img.onerror = function () { scheduleAdvance(0); };
+      if (settings.kenburns) {
+        var displaySec = Math.max(2, settings.interval || 8);
+        img.className = 'kenburns';
+        img.style.animationDuration = displaySec + 's';
+        img.style.transformOrigin = KENBURNS_ORIGINS[Math.floor(Math.random() * KENBURNS_ORIGINS.length)];
+      }
       img.src = url;
       back.appendChild(img);
+    }
+  }
+
+  // ---------- Zeitplan (Nachtruhe) ----------
+  function parseTimeToMinutes(hhmm) {
+    var parts = (hhmm || '').split(':');
+    var h = parseInt(parts[0], 10), m = parseInt(parts[1], 10);
+    if (isNaN(h) || isNaN(m)) return null;
+    return h * 60 + m;
+  }
+
+  function isWithinScheduleOff() {
+    if (!settings.schedule_enabled) return false;
+    var start = parseTimeToMinutes(settings.schedule_start);
+    var end = parseTimeToMinutes(settings.schedule_end);
+    if (start === null || end === null || start === end) return false;
+    var now = new Date();
+    var nowMin = now.getHours() * 60 + now.getMinutes();
+    if (start < end) return nowMin >= start && nowMin < end;
+    return nowMin >= start || nowMin < end; // Bereich über Mitternacht hinweg, z. B. 22:00–07:00
+  }
+
+  function applySchedule() {
+    var shouldBeOff = isWithinScheduleOff();
+    if (shouldBeOff === scheduledOff) return;
+    scheduledOff = shouldBeOff;
+
+    if (scheduledOff) {
+      if (advanceTimer) { clearTimeout(advanceTimer); advanceTimer = null; }
+      clearSlide(front);
+      clearSlide(back);
+      emptyEl.hidden = true;
+      releaseWakeLock();
+    } else {
+      requestWakeLockIfSupported();
+      if (order.length) showNext();
     }
   }
 
@@ -154,11 +208,14 @@
 
       if (imagesChanged || shuffleChanged || !order.length) buildOrder();
 
+      applySchedule();
+
       // Erstes Bild/Video sofort zeigen statt auf einen Timer zu warten –
       // sonst bleibt der Bildschirm bei z. B. 100s Anzeigedauer lange schwarz.
       // Danach plant jede Anzeige selbst ihren nächsten Wechsel (Bild: nach
-      // settings.interval; Video: sobald es zu Ende ist).
-      if (wasEmpty && order.length) showNext();
+      // settings.interval; Video: sobald es zu Ende ist). Nicht während der
+      // per Zeitplan konfigurierten Nachtruhe.
+      if (wasEmpty && order.length && !scheduledOff) showNext();
     }).catch(function () { /* Netzwerkfehler ignorieren, alten Stand weiterverwenden */ });
   }
 
@@ -230,18 +287,29 @@
   }
 
   // ---------- Bildschirm wach halten ----------
+  var wakeLockSentinel = null;
+  function requestWakeLockIfSupported() {
+    if (!('wakeLock' in navigator)) return;
+    navigator.wakeLock.request('screen').then(function (sentinel) {
+      wakeLockSentinel = sentinel;
+    }).catch(function () {});
+  }
+  function releaseWakeLock() {
+    if (wakeLockSentinel) {
+      wakeLockSentinel.release().catch(function () {});
+      wakeLockSentinel = null;
+    }
+  }
   if ('wakeLock' in navigator) {
-    var requestWakeLock = function () {
-      navigator.wakeLock.request('screen').catch(function () {});
-    };
-    requestWakeLock();
+    requestWakeLockIfSupported();
     document.addEventListener('visibilitychange', function () {
-      if (document.visibilityState === 'visible') requestWakeLock();
+      if (document.visibilityState === 'visible' && !scheduledOff) requestWakeLockIfSupported();
     });
   }
 
   refreshAll();
   setInterval(refreshAll, REFRESH_MS);
+  setInterval(applySchedule, SCHEDULE_CHECK_MS);
 })();
 </script>
 </body>

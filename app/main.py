@@ -5,25 +5,30 @@ max. 1920px verkleinert, EXIF-korrigiert und als JPEG gespeichert. Videos
 werden unverändert gespeichert (kein Transcoding, kein ffmpeg nötig) und in
 der Diashow bis zum Ende abgespielt. Reihenfolge + Sichtbarkeit (ausgeblendet
 oder nicht) liegen zusammen in einer kleinen order.json, Anzeige-Einstellungen
-in settings.json – beide neben dem Medien-Ordner.
+(inkl. Ken-Burns-Effekt und Zeitplan) in settings.json – beide neben dem
+Medien-Ordner.
 
 Öffentlich (kein Login, für die Tablet-Anzeige): /frame, GET /api/images,
-GET /images/{name}, GET /api/settings.
-Nur mit Admin-Passwort (HTTP Basic, Default "admin"): /upload, Upload/Löschen,
-Reihenfolge/Sichtbarkeit ändern, Einstellungen ändern, Passwort ändern.
+GET /images/{name}, GET /api/settings, /manifest.json, /icons/*.
+Nur mit Admin-Passwort (HTTP Basic, Default "admin"): /upload, Upload/Löschen/
+Teilen-Upload, Reihenfolge/Sichtbarkeit ändern, Einstellungen ändern,
+Passwort ändern, Speicherplatz-Info.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import os
+import re
 import secrets
+import shutil
 import time
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps
 from pydantic import BaseModel
 
@@ -34,6 +39,8 @@ STATE_DIR = DATA_DIR.parent
 ORDER_FILE = STATE_DIR / "order.json"
 SETTINGS_FILE = STATE_DIR / "settings.json"
 ADMIN_FILE = STATE_DIR / "admin.json"
+ICONS_DIR = BASE_DIR / "static" / "icons"
+ICONS_DIR.mkdir(parents=True, exist_ok=True)
 
 MAX_EDGE = 1920
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp"}
@@ -45,10 +52,19 @@ MEDIA_TYPES = {
     ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp",
     ".mp4": "video/mp4", ".webm": "video/webm",
 }
-DEFAULT_SETTINGS = {"interval": 8, "shuffle": False}
+DEFAULT_SETTINGS = {
+    "interval": 8,
+    "shuffle": False,
+    "kenburns": True,
+    "schedule_enabled": False,
+    "schedule_start": "22:00",
+    "schedule_end": "07:00",
+}
 DEFAULT_ADMIN_PASSWORD = "admin"
+TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 
 app = FastAPI(title="PixelFrame")
+app.mount("/icons", StaticFiles(directory=ICONS_DIR), name="icons")
 security = HTTPBasic()
 
 
@@ -87,6 +103,10 @@ class MediaListPayload(BaseModel):
 class SettingsPayload(BaseModel):
     interval: float
     shuffle: bool
+    kenburns: bool = True
+    schedule_enabled: bool = False
+    schedule_start: str = "22:00"
+    schedule_end: str = "07:00"
 
 
 class PasswordChangePayload(BaseModel):
@@ -174,79 +194,10 @@ def _save_upload_bounded(file: UploadFile, dest: Path, max_bytes: int) -> None:
         raise
 
 
-# ---------- Öffentliche Routen (Tablet-Anzeige, kein Login) ----------
-
-@app.get("/frame", response_class=HTMLResponse)
-def frame_page() -> str:
-    return _read_static("frame.html")
-
-
-@app.get("/api/images")
-def list_images() -> dict:
-    return {"images": [e["name"] for e in _ordered_entries() if not e["hidden"]]}
-
-
-@app.get("/api/settings")
-def get_settings() -> dict:
-    return {**DEFAULT_SETTINGS, **_load_json(SETTINGS_FILE, {})}
-
-
-@app.get("/images/{filename}")
-def get_media(filename: str) -> FileResponse:
-    path = _media_path(filename)
-    return FileResponse(path, media_type=MEDIA_TYPES.get(path.suffix.lower()))
-
-
-# ---------- Admin-Routen (HTTP Basic Auth erforderlich) ----------
-
-@admin_router.get("/", response_class=HTMLResponse)
-def root() -> str:
-    return _read_static("upload.html")
-
-
-@admin_router.get("/upload", response_class=HTMLResponse)
-def upload_page() -> str:
-    return _read_static("upload.html")
-
-
-@admin_router.get("/api/media")
-def list_media() -> dict:
-    return {"media": _ordered_entries()}
-
-
-@admin_router.post("/api/media")
-def set_media(payload: MediaListPayload) -> dict:
-    existing = {p.name for p in DATA_DIR.iterdir() if p.is_file()}
-    entries, seen = [], set()
-    for item in payload.media:
-        if item.name in existing and item.name not in seen:
-            entries.append({"name": item.name, "hidden": item.hidden})
-            seen.add(item.name)
-    missing = sorted(existing - seen)
-    entries.extend({"name": n, "hidden": False} for n in missing)
-    _save_json(ORDER_FILE, entries)
-    return {"media": entries}
-
-
-@admin_router.put("/api/settings")
-def update_settings(payload: SettingsPayload) -> dict:
-    if payload.interval < 2:
-        raise HTTPException(400, "Anzeigedauer muss mindestens 2 Sekunden betragen")
-    settings = {"interval": payload.interval, "shuffle": payload.shuffle}
-    _save_json(SETTINGS_FILE, settings)
-    return settings
-
-
-@admin_router.put("/api/admin/password")
-def change_password(payload: PasswordChangePayload) -> dict:
-    if len(payload.new_password) < 4:
-        raise HTTPException(400, "Neues Passwort muss mindestens 4 Zeichen haben")
-    _save_json(ADMIN_FILE, {"password_hash": _hash_password(payload.new_password)})
-    return {"ok": True}
-
-
-@admin_router.post("/api/images")
-async def upload_media(file: UploadFile = File(...)) -> dict:
+def _store_upload(file: UploadFile) -> dict:
+    """Verarbeitet und speichert eine hochgeladene Datei (Bild oder Video),
+    ergänzt order.json. Gemeinsam genutzt von /api/images und dem
+    Teilen-Upload-Ziel /api/share-upload."""
     ext = Path(file.filename or "").suffix.lower()
     if ext not in ALLOWED_EXT:
         raise HTTPException(400, f"Dateityp '{ext}' nicht erlaubt (erlaubt: {', '.join(sorted(ALLOWED_EXT))})")
@@ -282,6 +233,139 @@ async def upload_media(file: UploadFile = File(...)) -> dict:
     _save_json(ORDER_FILE, entries)
 
     return {"filename": dest_name, "type": "video" if is_video else "image"}
+
+
+# ---------- Öffentliche Routen (Tablet-Anzeige, kein Login) ----------
+
+@app.get("/frame", response_class=HTMLResponse)
+def frame_page() -> str:
+    return _read_static("frame.html")
+
+
+@app.get("/api/images")
+def list_images() -> dict:
+    return {"images": [e["name"] for e in _ordered_entries() if not e["hidden"]]}
+
+
+@app.get("/api/settings")
+def get_settings() -> dict:
+    return {**DEFAULT_SETTINGS, **_load_json(SETTINGS_FILE, {})}
+
+
+@app.get("/images/{filename}")
+def get_media(filename: str) -> FileResponse:
+    path = _media_path(filename)
+    return FileResponse(path, media_type=MEDIA_TYPES.get(path.suffix.lower()))
+
+
+@app.get("/manifest.json")
+def manifest() -> JSONResponse:
+    """PWA-Manifest fürs Admin-Panel – ermöglicht "Zum Startbildschirm
+    hinzufügen" und (nur über HTTPS, siehe README) den Teilen-Upload vom
+    Handy direkt aus der Fotos-/Galerie-App heraus."""
+    data = {
+        "name": "PixelFrame Verwaltung",
+        "short_name": "PixelFrame",
+        "start_url": "/upload",
+        "scope": "/",
+        "display": "standalone",
+        "background_color": "#111111",
+        "theme_color": "#4caf50",
+        "icons": [
+            {"src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
+            {"src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png"},
+        ],
+        "share_target": {
+            "action": "/api/share-upload",
+            "method": "POST",
+            "enctype": "multipart/form-data",
+            "params": {"files": [{"name": "media", "accept": ["image/*", "video/*"]}]},
+        },
+    }
+    return JSONResponse(content=data, media_type="application/manifest+json")
+
+
+# ---------- Admin-Routen (HTTP Basic Auth erforderlich) ----------
+
+@admin_router.get("/", response_class=HTMLResponse)
+def root() -> str:
+    return _read_static("upload.html")
+
+
+@admin_router.get("/upload", response_class=HTMLResponse)
+def upload_page() -> str:
+    return _read_static("upload.html")
+
+
+@admin_router.get("/api/media")
+def list_media() -> dict:
+    return {"media": _ordered_entries()}
+
+
+@admin_router.post("/api/media")
+def set_media(payload: MediaListPayload) -> dict:
+    existing = {p.name for p in DATA_DIR.iterdir() if p.is_file()}
+    entries, seen = [], set()
+    for item in payload.media:
+        if item.name in existing and item.name not in seen:
+            entries.append({"name": item.name, "hidden": item.hidden})
+            seen.add(item.name)
+    missing = sorted(existing - seen)
+    entries.extend({"name": n, "hidden": False} for n in missing)
+    _save_json(ORDER_FILE, entries)
+    return {"media": entries}
+
+
+@admin_router.get("/api/storage")
+def get_storage() -> dict:
+    usage = shutil.disk_usage(DATA_DIR)
+    return {"used_bytes": usage.used, "total_bytes": usage.total, "free_bytes": usage.free}
+
+
+@admin_router.put("/api/settings")
+def update_settings(payload: SettingsPayload) -> dict:
+    if payload.interval < 2:
+        raise HTTPException(400, "Anzeigedauer muss mindestens 2 Sekunden betragen")
+    if payload.schedule_enabled and (not TIME_RE.match(payload.schedule_start) or not TIME_RE.match(payload.schedule_end)):
+        raise HTTPException(400, "Zeitplan-Uhrzeiten müssen im Format HH:MM sein")
+    settings = {
+        "interval": payload.interval,
+        "shuffle": payload.shuffle,
+        "kenburns": payload.kenburns,
+        "schedule_enabled": payload.schedule_enabled,
+        "schedule_start": payload.schedule_start,
+        "schedule_end": payload.schedule_end,
+    }
+    _save_json(SETTINGS_FILE, settings)
+    return settings
+
+
+@admin_router.put("/api/admin/password")
+def change_password(payload: PasswordChangePayload) -> dict:
+    if len(payload.new_password) < 4:
+        raise HTTPException(400, "Neues Passwort muss mindestens 4 Zeichen haben")
+    _save_json(ADMIN_FILE, {"password_hash": _hash_password(payload.new_password)})
+    return {"ok": True}
+
+
+@admin_router.post("/api/images")
+async def upload_media(file: UploadFile = File(...)) -> dict:
+    return _store_upload(file)
+
+
+@admin_router.post("/api/share-upload")
+async def share_upload(request: Request) -> RedirectResponse:
+    """Ziel für die Android-'Teilen'-Funktion (siehe /manifest.json). Nimmt
+    eine oder mehrere Dateien entgegen, verarbeitet jede wie einen normalen
+    Upload, überspringt einzelne ungültige Dateien statt komplett abzubrechen."""
+    form = await request.form()
+    for f in form.getlist("media"):
+        if hasattr(f, "filename") and hasattr(f, "file"):
+            try:
+                _store_upload(f)
+            except HTTPException:
+                continue
+    return RedirectResponse(url="/upload", status_code=303)
 
 
 @admin_router.delete("/api/images/{filename}")
