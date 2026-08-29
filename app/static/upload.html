@@ -165,24 +165,32 @@
   function formatGB(bytes) { return (bytes / (1024 * 1024 * 1024)).toFixed(1); }
 
   function loadStorage() {
-    fetch('/api/storage').then(function (r) { return r.json(); }).then(function (s) {
+    fetch('/api/storage').then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function (s) {
       var pct = s.total_bytes ? Math.round((s.used_bytes / s.total_bytes) * 100) : 0;
       storageText.textContent = formatGB(s.used_bytes) + ' GB von ' + formatGB(s.total_bytes) + ' GB belegt (' + pct + '%)';
       storageBarFill.style.width = Math.min(100, pct) + '%';
       storageBarFill.className = pct >= 90 ? 'crit' : (pct >= 75 ? 'warn' : '');
-    }).catch(function () { storageText.textContent = 'Speicherplatz-Info nicht verfügbar'; });
+    }).catch(function (e) {
+      storageText.textContent = 'Speicherplatz-Info nicht verfügbar (' + e.message + ')';
+    });
   }
 
   // ---------- Einstellungen ----------
   function loadSettings() {
-    fetch('/api/settings').then(function (r) { return r.json(); }).then(function (s) {
+    fetch('/api/settings').then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function (s) {
       intervalInput.value = s.interval;
       shuffleInput.checked = !!s.shuffle;
       kenburnsInput.checked = s.kenburns !== false;
       scheduleEnabledInput.checked = !!s.schedule_enabled;
       scheduleStartInput.value = s.schedule_start || '22:00';
       scheduleEndInput.value = s.schedule_end || '07:00';
-    });
+    }).catch(function (e) { flash(settingsStatus, 'Laden fehlgeschlagen (' + e.message + ')', false); });
   }
 
   saveSettingsBtn.addEventListener('click', function () {
@@ -239,10 +247,14 @@
   }
 
   function loadMedia() {
-    fetch('/api/media').then(function (r) { return r.json(); }).then(function (data) {
+    fetch('/api/media').then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function (data) {
       grid.innerHTML = '';
       currentMedia = data.media || [];
       emptyMsg.hidden = currentMedia.length > 0;
+      emptyMsg.textContent = 'Noch keine Bilder/Videos hochgeladen.';
 
       currentMedia.forEach(function (item, idx) {
         var name = item.name;
@@ -301,6 +313,9 @@
         card.appendChild(controls);
         grid.appendChild(card);
       });
+    }).catch(function (e) {
+      emptyMsg.hidden = false;
+      emptyMsg.textContent = 'Laden fehlgeschlagen (' + e.message + ')';
     });
   }
 
